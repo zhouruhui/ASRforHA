@@ -1,11 +1,11 @@
 {
   "domain": "cloud_asr",
   "name": "中文云语音识别",
-  "documentation": "https://github.com/your-username/hass-chinese-asr",
-  "issue_tracker": "https://github.com/your-username/hass-chinese-asr/issues",
+  "documentation": "https://github.com/zhouruhui/ASRforHA",
+  "issue_tracker": "https://github.com/zhouruhui/ASRforHA/issues",
   "dependencies": ["stt"],
-  "codeowners": ["@your-username"],
-  "requirements": ["aiohttp>=3.8.0"],
+  "codeowners": ["@zhouruhui"],
+  "requirements": ["aiohttp>=3.8.0", "numpy>=1.19.0"],
   "version": "0.1.0",
   "iot_class": "cloud_polling"
 } 

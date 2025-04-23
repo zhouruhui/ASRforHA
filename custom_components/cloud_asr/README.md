@@ -7,7 +7,7 @@
 ### HACS安装（推荐）
 
 1. 在HACS中，转到"自定义存储库"
-2. 添加此仓库: `https://github.com/your-username/hass-chinese-asr`
+2. 添加此仓库: `https://github.com/zhouruhui/ASRforHA`
 3. 选择类别为"集成"
 4. 点击"添加"
 5. 搜索"中文云语音识别"并安装
@@ -32,6 +32,10 @@ cloud_asr:
     access_token: 你的火山引擎语音合成服务access_token
     cluster: volcengine_input_common
     output_dir: tmp/
+    # VAD配置 (可选)
+    enable_vad: true
+    vad_mode: normal  # 可选: normal, low, high
+    
   TencentASR:
     # token申请地址：https://console.cloud.tencent.com/cam/capi
     # 免费领取资源：https://console.cloud.tencent.com/asr/resourcebundle
@@ -40,6 +44,9 @@ cloud_asr:
     secret_id: 你的腾讯语音合成服务secret_id
     secret_key: 你的腾讯语音合成服务secret_key
     output_dir: tmp/
+    # VAD配置 (可选)
+    enable_vad: true
+    vad_mode: normal  # 可选: normal, low, high
 ```
 
 ### 豆包ASR (火山引擎) 配置
@@ -51,6 +58,8 @@ cloud_asr:
 | access_token | 是 | 火山引擎访问令牌 |
 | cluster | 是 | 资源ID，通常为 `volcengine_input_common` |
 | output_dir | 否 | 临时文件存储目录，默认为 `tmp/` |
+| enable_vad | 否 | 是否启用VAD，默认为 `true` |
+| vad_mode | 否 | VAD灵敏度，可选 `normal`、`low`、`high`，默认为 `normal` |
 
 ### 腾讯ASR 配置
 
@@ -61,6 +70,16 @@ cloud_asr:
 | secret_id | 是 | 腾讯云API密钥ID |
 | secret_key | 是 | 腾讯云API密钥 |
 | output_dir | 否 | 临时文件存储目录，默认为 `tmp/` |
+| enable_vad | 否 | 是否启用VAD，默认为 `true` |
+| vad_mode | 否 | VAD灵敏度，可选 `normal`、`low`、`high`，默认为 `normal` |
+
+### VAD设置说明
+
+VAD（语音活动检测）用于过滤音频中的静音部分，只保留有语音的片段，可以提高识别准确率和降低API调用成本。
+
+- `normal`: 正常灵敏度，适合大多数场景
+- `low`: 低灵敏度，需要更强的语音信号才会被识别为语音，适合噪音较大的环境
+- `high`: 高灵敏度，弱语音信号也能被检测到，适合安静环境下捕捉低音量语音
 
 ## 使用
 
@@ -70,4 +89,5 @@ cloud_asr:
 
 - 确保已经在各自的平台上申请了相应的API密钥
 - 临时文件目录需要有写入权限
-- 语音识别需要网络连接，请确保Home Assistant可以访问外部网络 
+- 语音识别需要网络连接，请确保Home Assistant可以访问外部网络
+- 使用VAD功能需要安装numpy库，如果未安装，可以通过HACS或手动安装 

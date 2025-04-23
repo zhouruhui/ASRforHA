@@ -8,6 +8,7 @@
 
 - 支持火山引擎(豆包)ASR服务
 - 支持腾讯云ASR服务
+- 支持VAD（语音活动检测），过滤静音提高识别率
 - 可通过configuration.yaml文件配置
 - 集成Home Assistant语音助手
 - 支持中文和英文语音识别
@@ -17,7 +18,7 @@
 ### HACS安装（推荐）
 
 1. 在HACS中，转到"自定义存储库"
-2. 添加此仓库: `https://github.com/your-username/hass-chinese-asr`
+2. 添加此仓库: `https://github.com/zhouruhui/ASRforHA`
 3. 选择类别为"集成"
 4. 点击"添加"
 5. 搜索"中文云语音识别"并安装
@@ -42,6 +43,10 @@ cloud_asr:
     access_token: 你的火山引擎语音合成服务access_token
     cluster: volcengine_input_common
     output_dir: tmp/
+    # VAD配置 (可选)
+    enable_vad: true
+    vad_mode: normal  # 可选: normal, low, high
+    
   TencentASR:
     # token申请地址：https://console.cloud.tencent.com/cam/capi
     # 免费领取资源：https://console.cloud.tencent.com/asr/resourcebundle
@@ -50,6 +55,9 @@ cloud_asr:
     secret_id: 你的腾讯语音合成服务secret_id
     secret_key: 你的腾讯语音合成服务secret_key
     output_dir: tmp/
+    # VAD配置 (可选)
+    enable_vad: true
+    vad_mode: normal  # 可选: normal, low, high
 ```
 
 更多配置详情请查看[组件文档](./custom_components/cloud_asr/README.md)。
