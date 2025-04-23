@@ -1,6 +1,8 @@
 {
   "name": "中文云语音识别 (Chinese Cloud ASR)",
-  "content_in_root": true,
+  "content_in_root": false,
   "render_readme": true,
-  "domains": ["cloud_asr"]
+  "domains": ["cloud_asr"],
+  "country": ["CN"],
+  "homeassistant": "2023.8.0"
 } 

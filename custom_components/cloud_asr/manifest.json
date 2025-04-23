@@ -7,5 +7,8 @@
   "codeowners": ["@zhouruhui"],
   "requirements": ["aiohttp>=3.8.0", "numpy>=1.19.0"],
   "version": "0.1.0",
-  "iot_class": "cloud_polling"
+  "iot_class": "cloud_polling",
+  "config_flow": false,
+  "homeassistant": "2023.8.0",
+  "integration_type": "integration"
 } 
