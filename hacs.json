@@ -1,0 +1,6 @@
+{
+  "name": "中文云语音识别 (Chinese Cloud ASR)",
+  "content_in_root": true,
+  "render_readme": true,
+  "domains": ["cloud_asr"]
+} 
