@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 from homeassistant.components import stt
+from homeassistant.helpers.discovery import async_load_platform
 
 from .const import (
     DOMAIN,
@@ -117,9 +118,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         hass.data[DOMAIN][service_name] = provider
         
-        # 注册STT提供程序
-        hass.helpers.discovery.async_load_platform(
-            "stt", DOMAIN, {"name": service_name}, config
+        # 注册STT提供程序，添加await关键字等待协程完成
+        await async_load_platform(
+            hass, "stt", DOMAIN, {"name": service_name}, config
         )
     
     return True
