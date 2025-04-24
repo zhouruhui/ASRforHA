@@ -70,10 +70,10 @@ class DoubaoProvider:
             
             text = await self._recognize_audio(temp_file, sample_rate, language)
             # 根据新API创建结果
-            return stt.SpeechResult(text=text)
+            return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            return stt.SpeechResult(text="")
+            return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
             try:
@@ -106,19 +106,20 @@ class DoubaoProvider:
     
     async def _recognize_audio(self, audio_file, sample_rate, language):
         """发送语音识别请求。"""
-        headers = {
-            "Authorization": f"Bearer {self.access_token}"
-        }
+        # 尝试正确的认证方式
+        headers = {}
         
         # 准备连接参数
         request_params = {
-            "appid": self.appid,
-            "resource_id": self.cluster,  # 使用cluster作为resource_id
+            "app_id": self.appid,  # 使用app_id而不是appid
+            "resource_id": self.cluster,
             "format": "wav",
             "sample_rate": sample_rate,
             "audio_encoding": "pcm_s16le",
+            "model_name": "speech_recognition_default",  # 添加模型名称字段
             "force_to_speech_time": 0,
             "end_window_size": 800,
+            "token": self.access_token  # 也可能需要在params中
         }
         
         # 添加语言参数
@@ -127,32 +128,54 @@ class DoubaoProvider:
         elif language and language.startswith("en"):
             request_params["lang"] = "en"
             
+        # 添加调试信息
+        _LOGGER.debug("豆包API认证信息: 已配置 (token长度: %d), appid: %s, 集群: %s",
+                     len(self.access_token) if self.access_token else 0,
+                     self.appid,
+                     self.cluster)
+            
         try:
+            # 更新WebSocket URL以包含认证信息
+            ws_url = f"{self.ws_url}?token={self.access_token}"
+            
             # 建立WebSocket连接，这里使用WebSocket流式API
             async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(self.ws_url, headers=headers, timeout=DEFAULT_TIMEOUT) as ws:
+                # 添加更多调试信息
+                _LOGGER.debug("尝试连接豆包API: %s", ws_url)
+                _LOGGER.debug("请求参数: %s", {k: v if k != 'token' else '***' for k, v in request_params.items()})
+                
+                async with session.ws_connect(
+                    ws_url,
+                    headers=headers,
+                    timeout=DEFAULT_TIMEOUT,
+                    heartbeat=30
+                ) as ws:
                     # 发送初始请求参数
+                    _LOGGER.debug("发送初始化参数")
                     await ws.send_json(request_params)
                     
                     # 读取音频文件并发送
-                    with open(audio_file, "rb") as f:
-                        audio_data = f.read()
+                    audio_data = await asyncio.to_thread(self._read_file, audio_file)
+                    _LOGGER.debug("读取到音频数据: %d 字节", len(audio_data))
                     
                     # 根据火山引擎WebSocket协议，分批发送音频数据
                     chunk_size = 4096
                     for i in range(0, len(audio_data), chunk_size):
                         chunk = audio_data[i:i+chunk_size]
                         await ws.send_bytes(chunk)
-                    
+                        
                     # 发送结束标志
+                    _LOGGER.debug("发送结束标志")
                     await ws.send_json({"end": True})
                     
                     # 接收并解析结果
                     final_text = ""
+                    _LOGGER.debug("已发送音频数据，等待豆包API响应")
                     async with async_timeout.timeout(DEFAULT_TIMEOUT):
                         async for msg in ws:
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 data = json.loads(msg.data)
+                                _LOGGER.debug("豆包API响应: %s", data)
                                 
                                 # 处理不同类型的结果
                                 if "text" in data:
