@@ -88,11 +88,23 @@ class TencentProvider:
     async def _stream_to_bytes(self, stream):
         """将流转换为字节。"""
         audio_data = b""
-        while True:
-            chunk = await stream.read(4096)
-            if not chunk:
-                break
-            audio_data += chunk
+        try:
+            # 处理async_generator类型的流
+            async for chunk in stream:
+                if not chunk:
+                    break
+                audio_data += chunk
+        except AttributeError:
+            # 兼容旧版本的接口，尝试使用read方法
+            while True:
+                try:
+                    chunk = await stream.read(4096)
+                    if not chunk:
+                        break
+                    audio_data += chunk
+                except Exception as e:
+                    _LOGGER.error("读取音频流出错: %s", e)
+                    break
         return audio_data
         
     async def _call_tencent_asr(self, audio_base64, sample_rate, language):
