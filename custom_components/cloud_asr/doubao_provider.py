@@ -41,37 +41,46 @@ class DoubaoProvider:
         
         # 保存音频流到临时文件
         audio_data = await self._stream_to_bytes(stream)
+        
+        # 确保音频数据是有效的WAV格式
+        if not audio_data.startswith(b'RIFF'):
+            _LOGGER.debug("添加WAV头部到音频数据")
+            audio_data = await asyncio.to_thread(self._add_wav_header, audio_data, sample_rate)
+            
         temp_file = os.path.join(self.output_dir, f"{uuid.uuid4()}.wav")
         
-        with open(temp_file, "wb") as f:
-            f.write(audio_data)
+        # 使用异步文件操作
+        await asyncio.to_thread(self._write_file, temp_file, audio_data)
         
         try:
             # 如果启用了VAD，先进行处理
             if self.vad_processor:
-                with open(temp_file, "rb") as f:
-                    original_audio = f.read()
+                # 使用异步读取文件
+                original_audio = await asyncio.to_thread(self._read_file, temp_file)
                 
                 _LOGGER.debug("使用VAD处理音频")
-                processed_audio = self.vad_processor.process_wav(original_audio)
+                processed_audio = await asyncio.to_thread(self.vad_processor.process_wav, original_audio)
                 
                 # 保存VAD处理后的音频
                 vad_temp_file = os.path.join(self.output_dir, f"vad_{uuid.uuid4()}.wav")
-                with open(vad_temp_file, "wb") as f:
-                    f.write(processed_audio)
+                await asyncio.to_thread(self._write_file, vad_temp_file, processed_audio)
                 
                 # 替换为处理后的临时文件
                 temp_file = vad_temp_file
             
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            return stt.SpeechResult(text)
+            # 根据新API创建结果
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            return stt.SpeechResult("")
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+            try:
+                if os.path.exists(temp_file):
+                    await asyncio.to_thread(os.remove, temp_file)
+            except Exception as e:
+                _LOGGER.error("清理临时文件失败: %s", e)
     
     async def _stream_to_bytes(self, stream):
         """将流转换为字节。"""
@@ -163,4 +172,43 @@ class DoubaoProvider:
             return ""
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别异常: %s", err)
-            return "" 
+            return ""
+    
+    def _write_file(self, file_path, data):
+        """写入文件（非阻塞方法，在线程池中执行）"""
+        with open(file_path, "wb") as f:
+            f.write(data)
+            
+    def _read_file(self, file_path):
+        """读取文件（非阻塞方法，在线程池中执行）"""
+        with open(file_path, "rb") as f:
+            return f.read()
+    
+    def _add_wav_header(self, audio_data, sample_rate, channels=1, sample_width=2):
+        """为PCM数据添加WAV头部。
+        
+        Args:
+            audio_data: 原始PCM音频数据
+            sample_rate: 采样率
+            channels: 通道数
+            sample_width: 样本宽度（字节）
+            
+        Returns:
+            带WAV头部的音频数据
+        """
+        import wave
+        import io
+        
+        # 创建内存缓冲区
+        wav_buffer = io.BytesIO()
+        
+        # 创建WAV文件
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(channels)
+            wav_file.setsampwidth(sample_width)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(audio_data)
+            
+        # 获取完整的WAV数据
+        wav_buffer.seek(0)
+        return wav_buffer.getvalue() 
