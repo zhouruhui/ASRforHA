@@ -119,8 +119,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         hass.data[DOMAIN][service_name] = provider
         
-        # 确保STT组件已加载
-        if not hass.config.components.get("stt"):
+        # 确保STT组件已加载，使用in操作符检查
+        if "stt" not in hass.config.components:
             if not await async_setup_component(hass, "stt", config):
                 _LOGGER.error("无法加载STT组件")
                 return False
