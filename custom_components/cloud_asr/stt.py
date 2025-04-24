@@ -5,7 +5,8 @@ import logging
 import voluptuous as vol
 
 from homeassistant.components import stt
-from homeassistant.helpers.typing import HomeAssistantType, ConfigType
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 
