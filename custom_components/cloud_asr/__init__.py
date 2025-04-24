@@ -10,8 +10,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 from homeassistant.components import stt
-# 导入平台发现函数
-from homeassistant.helpers import discovery
+# 导入平台加载函数
+from homeassistant.setup import async_setup_component
 
 from .const import (
     DOMAIN,
@@ -119,14 +119,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         hass.data[DOMAIN][service_name] = provider
         
-        # 使用discovery模块加载STT平台
+        # 确保STT组件已加载
+        if not hass.config.components.get("stt"):
+            if not await async_setup_component(hass, "stt", config):
+                _LOGGER.error("无法加载STT组件")
+                return False
+
+        # 注册STT平台
+        # 使用hass.async_create_task避免阻塞
         hass.async_create_task(
-            discovery.async_load_platform(
+            stt.async_register_engine(
                 hass,
-                "stt",
                 DOMAIN,
+                service_name,
                 {"name": service_name},
-                config
             )
         )
     

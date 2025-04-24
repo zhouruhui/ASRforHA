@@ -11,21 +11,22 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_platform(
-    hass: HomeAssistantType, config: ConfigType, async_add_entities, discovery_info=None
-):
-    """设置STT平台。"""
+async def async_get_engine(hass, config, discovery_info=None):
+    """返回STT引擎。
+    
+    这是新版Home Assistant STT API需要的入口点方法。
+    """
     if discovery_info is None:
-        return
+        return None
 
     name = discovery_info["name"]
     provider = hass.data[DOMAIN].get(name)
 
     if provider is None:
         _LOGGER.error(f"未找到名为 {name} 的ASR提供程序")
-        return
+        return None
 
-    async_add_entities([CloudSpeechToTextEntity(name, provider)])
+    return CloudSpeechToTextEntity(name, provider)
 
 
 class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
