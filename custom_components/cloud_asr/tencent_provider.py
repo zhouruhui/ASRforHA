@@ -81,9 +81,11 @@ class TencentProvider:
                 
             # 调用腾讯云API进行识别
             text = await self._call_tencent_asr(audio_base64, sample_rate, language)
+            # 使用正确的参数创建结果
             return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("腾讯云语音识别失败: %s", err)
+            # 创建空结果
             return stt.SpeechResult(result="")
         finally:
             # 清理临时文件

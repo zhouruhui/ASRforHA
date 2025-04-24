@@ -10,6 +10,7 @@ import uuid
 import aiohttp
 import async_timeout
 from homeassistant.components import stt
+import ssl
 
 from .const import (
     DEFAULT_SAMPLE_RATE,
@@ -31,7 +32,8 @@ class DoubaoProvider:
         self.output_dir = output_dir
         self.vad_processor = vad_processor
         
-        # 构建基本连接参数
+        # 构建基本连接参数 - 使用正确的URL
+        # 根据文档："The WebSocket API for large language model speech recognition uses wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         
     async def async_process_audio_stream(self, metadata, stream):
@@ -69,10 +71,11 @@ class DoubaoProvider:
                 temp_file = vad_temp_file
             
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 根据新API创建结果
+            # 使用正确的参数创建结果
             return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
+            # 创建空结果
             return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
@@ -106,20 +109,24 @@ class DoubaoProvider:
     
     async def _recognize_audio(self, audio_file, sample_rate, language):
         """发送语音识别请求。"""
-        # 尝试正确的认证方式
-        headers = {}
+        # 根据火山引擎最新文档，使用正确的鉴权方式和URL
+        import uuid
+        connect_id = str(uuid.uuid4())
         
-        # 准备连接参数
+        headers = {
+            # 根据最新文档的鉴权信息
+            "X-Api-App-Key": self.appid,  # APP ID
+            "X-Api-Access-Key": self.access_token,  # Access Token
+            "X-Api-Resource-Id": self.cluster,  # 资源ID - 应为"volc.bigasr.sauc.duration"或"volc.bigasr.sauc.concurrent"
+            "X-Api-Connect-Id": connect_id,  # 跟踪ID
+            "Content-Type": "application/json"
+        }
+        
+        # 准备连接参数 - 简化参数避免冗余字段
         request_params = {
-            "app_id": self.appid,  # 使用app_id而不是appid
-            "resource_id": self.cluster,
             "format": "wav",
             "sample_rate": sample_rate,
             "audio_encoding": "pcm_s16le",
-            "model_name": "speech_recognition_default",  # 添加模型名称字段
-            "force_to_speech_time": 0,
-            "end_window_size": 800,
-            "token": self.access_token  # 也可能需要在params中
         }
         
         # 添加语言参数
@@ -129,26 +136,31 @@ class DoubaoProvider:
             request_params["lang"] = "en"
             
         # 添加调试信息
-        _LOGGER.debug("豆包API认证信息: 已配置 (token长度: %d), appid: %s, 集群: %s",
-                     len(self.access_token) if self.access_token else 0,
-                     self.appid,
-                     self.cluster)
+        _LOGGER.debug("豆包API认证信息: App Key: %s, 集群: %s, Connect ID: %s",
+                     self.appid, 
+                     self.cluster,
+                     connect_id)
             
+        ws_url = self.ws_url
+        
         try:
-            # 更新WebSocket URL以包含认证信息
-            ws_url = f"{self.ws_url}?token={self.access_token}"
-            
-            # 建立WebSocket连接，这里使用WebSocket流式API
+            # 建立WebSocket连接
             async with aiohttp.ClientSession() as session:
-                # 添加更多调试信息
                 _LOGGER.debug("尝试连接豆包API: %s", ws_url)
-                _LOGGER.debug("请求参数: %s", {k: v if k != 'token' else '***' for k, v in request_params.items()})
+                _LOGGER.debug("请求头: %s", {k: ('***' if k == 'X-Api-Access-Key' else v) for k, v in headers.items()})
+                _LOGGER.debug("请求参数: %s", request_params)
+                
+                # 增加SSL验证忽略，避免证书问题
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
                 
                 async with session.ws_connect(
                     ws_url,
                     headers=headers,
                     timeout=DEFAULT_TIMEOUT,
-                    heartbeat=30
+                    heartbeat=30,
+                    ssl=ssl_context
                 ) as ws:
                     # 发送初始请求参数
                     _LOGGER.debug("发送初始化参数")
