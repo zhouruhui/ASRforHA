@@ -6,12 +6,12 @@ import os
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 from homeassistant.components import stt
-# 直接导入async_setup_legacy_entry_from_platform函数
-from homeassistant.components.stt import async_setup_legacy_entry_from_platform
+# 导入平台发现函数
+from homeassistant.helpers import discovery
 
 from .const import (
     DOMAIN,
@@ -119,18 +119,39 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         hass.data[DOMAIN][service_name] = provider
         
-        # 使用新API注册STT提供程序
-        # 创建一个配置项，稍后会由async_get_engine函数使用
+        # 使用discovery模块加载STT平台
         hass.async_create_task(
-            async_setup_legacy_entry_from_platform(
+            discovery.async_load_platform(
                 hass,
                 "stt",
                 DOMAIN,
                 {"name": service_name},
-                {},
-                service_name,
+                config
             )
         )
+    
+    # 注册测试语音识别服务
+    async def handle_test_asr(call: ServiceCall):
+        """处理测试ASR服务。"""
+        service_name = call.data.get("service_name")
+        text = call.data.get("text", "测试语音识别服务")
+        
+        if not service_name or service_name not in hass.data[DOMAIN]:
+            _LOGGER.error(f"未找到语音识别服务: {service_name}")
+            return
+        
+        _LOGGER.info(f"测试语音识别服务 {service_name}: {text}")
+        hass.states.async_set(f"{DOMAIN}.{service_name}_test", text)
+    
+    hass.services.async_register(
+        DOMAIN, 
+        "test_asr", 
+        handle_test_asr, 
+        vol.Schema({
+            vol.Required("service_name"): cv.string,
+            vol.Optional("text"): cv.string,
+        })
+    )
     
     return True
 

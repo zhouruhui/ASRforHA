@@ -6,32 +6,33 @@ import voluptuous as vol
 
 from homeassistant.components import stt
 from homeassistant.helpers.typing import HomeAssistantType, ConfigType
-from homeassistant.config_entries import ConfigEntry
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_get_engine(hass, config, discovery_info=None):
-    """设置STT引擎。"""
+async def async_setup_platform(
+    hass: HomeAssistantType, config: ConfigType, async_add_entities, discovery_info=None
+):
+    """设置STT平台。"""
     if discovery_info is None:
-        return None
+        return
 
     name = discovery_info["name"]
     provider = hass.data[DOMAIN].get(name)
 
     if provider is None:
         _LOGGER.error(f"未找到名为 {name} 的ASR提供程序")
-        return None
+        return
 
-    return CloudSpeechToTextEngine(name, provider)
+    async_add_entities([CloudSpeechToTextEntity(name, provider)])
 
 
-class CloudSpeechToTextEngine(stt.SpeechToTextEntity):
-    """通用中文云ASR语音转文字引擎。"""
+class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
+    """通用中文云ASR语音转文字实体。"""
 
     def __init__(self, name, provider):
-        """初始化语音转文字引擎。"""
+        """初始化语音转文字实体。"""
         self._name = name
         self.provider = provider
         
