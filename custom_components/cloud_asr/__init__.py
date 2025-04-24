@@ -10,7 +10,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 import homeassistant.helpers.config_validation as cv
 from homeassistant.components import stt
-from homeassistant.helpers.discovery import async_load_platform
+# 直接导入async_setup_legacy_entry_from_platform函数
+from homeassistant.components.stt import async_setup_legacy_entry_from_platform
 
 from .const import (
     DOMAIN,
@@ -118,9 +119,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         hass.data[DOMAIN][service_name] = provider
         
-        # 注册STT提供程序，添加await关键字等待协程完成
-        await async_load_platform(
-            hass, "stt", DOMAIN, {"name": service_name}, config
+        # 使用新API注册STT提供程序
+        # 创建一个配置项，稍后会由async_get_engine函数使用
+        hass.async_create_task(
+            async_setup_legacy_entry_from_platform(
+                hass,
+                "stt",
+                DOMAIN,
+                {"name": service_name},
+                {},
+                service_name,
+            )
         )
     
     return True
