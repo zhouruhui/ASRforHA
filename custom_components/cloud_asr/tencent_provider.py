@@ -16,6 +16,8 @@ from urllib.parse import urlencode
 from homeassistant.components import stt
 import ssl
 import os.path
+from homeassistant.helpers import aiohttp_client
+from homeassistant.util import ssl as ha_ssl
 
 from .const import (
     DEFAULT_SAMPLE_RATE,
@@ -25,16 +27,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# 使用与doubao_provider相同的SSL上下文获取函数
-_SSL_CONTEXT = None
-def get_ssl_context():
-    """获取SSL上下文，避免在事件循环中创建"""
-    global _SSL_CONTEXT
-    if _SSL_CONTEXT is None:
-        _SSL_CONTEXT = ssl.create_default_context()
-        _SSL_CONTEXT.check_hostname = False
-        _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
-    return _SSL_CONTEXT
+# 在模块加载时（非事件循环中）创建SSL上下文
+_SSL_CONTEXT = ssl.create_default_context()
+_SSL_CONTEXT.check_hostname = False
+_SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 
 class TencentProvider:
     """腾讯云语音识别提供程序。"""
@@ -54,8 +50,8 @@ class TencentProvider:
         self.algorithm = "TC3-HMAC-SHA256"
         self.url = "https://" + self.host
         
-        # 预先创建SSL上下文
-        self.ssl_context = get_ssl_context()
+        # 使用模块级别的SSL上下文，避免在初始化时创建
+        self.ssl_context = _SSL_CONTEXT
         
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
@@ -97,12 +93,12 @@ class TencentProvider:
                 
             # 调用腾讯云API进行识别
             text = await self._call_tencent_asr(audio_base64, sample_rate, language)
-            # 使用正确的参数创建结果（text而不是result）
-            return stt.SpeechResult(text=text)
+            # 使用正确的参数创建结果（result而不是text）
+            return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("腾讯云语音识别失败: %s", err)
-            # 创建空结果（使用text参数）
-            return stt.SpeechResult(text="")
+            # 创建空结果（使用result参数）
+            return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
             try:
