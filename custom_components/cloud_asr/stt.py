@@ -84,4 +84,8 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
 
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
-        return await self.provider.async_process_audio_stream(metadata, stream) 
+        try:
+            return await self.provider.async_process_audio_stream(metadata, stream)
+        except Exception as err:
+            _LOGGER.error("处理音频流失败: %s", err)
+            return stt.SpeechResult(text="") 

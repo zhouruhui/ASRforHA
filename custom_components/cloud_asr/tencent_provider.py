@@ -14,6 +14,8 @@ import aiohttp
 import asyncio
 from urllib.parse import urlencode
 from homeassistant.components import stt
+import ssl
+import os.path
 
 from .const import (
     DEFAULT_SAMPLE_RATE,
@@ -22,6 +24,17 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# 使用与doubao_provider相同的SSL上下文获取函数
+_SSL_CONTEXT = None
+def get_ssl_context():
+    """获取SSL上下文，避免在事件循环中创建"""
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        _SSL_CONTEXT = ssl.create_default_context()
+        _SSL_CONTEXT.check_hostname = False
+        _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+    return _SSL_CONTEXT
 
 class TencentProvider:
     """腾讯云语音识别提供程序。"""
@@ -40,6 +53,9 @@ class TencentProvider:
         self.version = "2019-06-14"
         self.algorithm = "TC3-HMAC-SHA256"
         self.url = "https://" + self.host
+        
+        # 预先创建SSL上下文
+        self.ssl_context = get_ssl_context()
         
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
@@ -81,12 +97,12 @@ class TencentProvider:
                 
             # 调用腾讯云API进行识别
             text = await self._call_tencent_asr(audio_base64, sample_rate, language)
-            # 使用正确的参数创建结果
-            return stt.SpeechResult(result=text)
+            # 使用正确的参数创建结果（text而不是result）
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("腾讯云语音识别失败: %s", err)
-            # 创建空结果
-            return stt.SpeechResult(result="")
+            # 创建空结果（使用text参数）
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -159,7 +175,13 @@ class TencentProvider:
         # 发送请求
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(self.url, headers=headers, json=req_param, timeout=DEFAULT_TIMEOUT) as response:
+                async with session.post(
+                    self.url,
+                    headers=headers,
+                    json=req_param,
+                    timeout=DEFAULT_TIMEOUT,
+                    ssl=self.ssl_context  # 使用预先创建的SSL上下文
+                ) as response:
                     if response.status == 200:
                         result = await response.json()
                         _LOGGER.debug("腾讯云ASR响应: %s", result)
