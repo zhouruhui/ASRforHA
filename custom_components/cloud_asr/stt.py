@@ -42,6 +42,15 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
         """返回实体名称。"""
         return self._name
 
+    @name.setter
+    def name(self, value):
+        """设置实体名称。
+
+        这是为了兼容Home Assistant的legacy STT API。
+        在legacy.py中会尝试设置name属性。
+        """
+        self._name = value
+
     @property
     def supported_languages(self):
         """返回支持的语言列表。"""
