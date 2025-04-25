@@ -66,12 +66,12 @@ class DoubaoProvider:
         
         try:
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 使用正确的参数创建结果（根据最新错误日志，应为 result）
-            return stt.SpeechResult(result=text)
+            # 使用正确的参数创建结果（根据最新错误日志，应为 text）
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果（根据最新错误日志，应为 result）
-            return stt.SpeechResult(result="")
+            # 创建空结果（根据最新错误日志，应为 text）
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -119,6 +119,15 @@ class DoubaoProvider:
             "X-Api-Connect-Id": connect_id,
             "Content-Type": "application/json"
         }
+        
+        # 添加资源ID格式检查警告
+        if not self.cluster or not self.cluster.startswith("volc."):
+            _LOGGER.warning(
+                "配置的火山引擎资源ID '%s' 可能格式不正确，" 
+                "请检查VolcEngine控制台并确保其以 'volc.' 开头。 "
+                "常见的格式如 'volc.bigasr.sauc.duration' 或 'volc.bigasr.sauc.concurrent'.",
+                self.cluster
+            )
         
         # 准备连接参数 - 简化参数
         request_params = {
