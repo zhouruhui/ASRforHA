@@ -23,10 +23,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# 在模块加载时（非事件循环中）创建SSL上下文
-_SSL_CONTEXT = ssl.create_default_context()
-_SSL_CONTEXT.check_hostname = False
-_SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+# 不再预先创建 SSL 上下文，让 aiohttp 自动处理
+# _SSL_CONTEXT = ssl.create_default_context()
+# _SSL_CONTEXT.check_hostname = False
+# _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 
 class DoubaoProvider:
     """火山引擎(豆包)语音识别提供程序。"""
@@ -43,8 +43,8 @@ class DoubaoProvider:
         # 根据文档："The WebSocket API for large language model speech recognition uses wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         
-        # 使用模块级别的SSL上下文，避免在初始化时创建
-        self.ssl_context = _SSL_CONTEXT
+        # 不再需要存储 ssl_context
+        # self.ssl_context = _SSL_CONTEXT
         
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
@@ -66,12 +66,14 @@ class DoubaoProvider:
         
         try:
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 使用正确的参数创建结果（根据最新错误日志，应为 text）
-            return stt.SpeechResult(text=text)
+            # 使用正确的参数创建结果（根据最新错误日志，应为 result）
+            _LOGGER.debug("成功获取识别结果，准备创建 SpeechResult(result='%s')", text)
+            return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果（根据最新错误日志，应为 text）
-            return stt.SpeechResult(text="")
+            # 创建空结果（根据最新错误日志，应为 result）
+            _LOGGER.debug("发生错误，准备创建空的 SpeechResult(result='')")
+            return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
             try:
@@ -157,13 +159,13 @@ class DoubaoProvider:
                 _LOGGER.debug("请求头: %s", {k: ('***' if k == 'X-Api-Access-Key' else v) for k, v in headers.items()})
                 _LOGGER.debug("请求参数: %s", request_params)
                 
-                # 使用预创建的SSL上下文
+                # 移除明确的 ssl 上下文，让 aiohttp 自动处理
                 async with session.ws_connect(
                     ws_url,
                     headers=headers,
                     timeout=DEFAULT_TIMEOUT,
                     heartbeat=30,
-                    ssl=self.ssl_context
+                    # ssl=self.ssl_context  # 移除此行
                 ) as ws:
                     # 发送初始请求参数
                     _LOGGER.debug("发送初始化参数")
