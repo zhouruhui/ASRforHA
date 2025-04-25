@@ -35,14 +35,13 @@ _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 class TencentProvider:
     """腾讯云语音识别提供程序。"""
 
-    def __init__(self, name, appid, secret_id, secret_key, output_dir, vad_processor=None):
+    def __init__(self, name, appid, secret_id, secret_key, output_dir):
         """初始化腾讯云语音识别提供程序。"""
         self.name = name
         self.appid = appid
         self.secret_id = secret_id
         self.secret_key = secret_key
         self.output_dir = output_dir
-        self.vad_processor = vad_processor
         self.service = "asr"
         self.host = "asr.tencentcloudapi.com"
         self.region = "ap-guangzhou"  # 默认区域
@@ -72,21 +71,6 @@ class TencentProvider:
         await asyncio.to_thread(self._write_file, temp_file, audio_data)
         
         try:
-            # 如果启用了VAD，先进行处理
-            if self.vad_processor:
-                # 使用异步读取文件
-                original_audio = await asyncio.to_thread(self._read_file, temp_file)
-                
-                _LOGGER.debug("使用VAD处理音频")
-                processed_audio = await asyncio.to_thread(self.vad_processor.process_wav, original_audio)
-                
-                # 保存VAD处理后的音频
-                vad_temp_file = os.path.join(self.output_dir, f"vad_{uuid.uuid4()}.wav")
-                await asyncio.to_thread(self._write_file, vad_temp_file, processed_audio)
-                
-                # 替换为处理后的临时文件
-                temp_file = vad_temp_file
-                
             # 读取文件转为base64
             audio_data = await asyncio.to_thread(self._read_file, temp_file)
             audio_base64 = base64.b64encode(audio_data).decode("utf-8")

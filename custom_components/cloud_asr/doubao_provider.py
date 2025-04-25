@@ -31,14 +31,13 @@ _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 class DoubaoProvider:
     """火山引擎(豆包)语音识别提供程序。"""
 
-    def __init__(self, name, appid, access_token, cluster, output_dir, vad_processor=None):
+    def __init__(self, name, appid, access_token, cluster, output_dir):
         """初始化火山引擎(豆包)语音识别提供程序。"""
         self.name = name
         self.appid = appid
         self.access_token = access_token
         self.cluster = cluster
         self.output_dir = output_dir
-        self.vad_processor = vad_processor
         
         # 构建基本连接参数 - 使用正确的URL
         # 根据文档："The WebSocket API for large language model speech recognition uses wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
@@ -66,21 +65,6 @@ class DoubaoProvider:
         await asyncio.to_thread(self._write_file, temp_file, audio_data)
         
         try:
-            # 如果启用了VAD，先进行处理
-            if self.vad_processor:
-                # 使用异步读取文件
-                original_audio = await asyncio.to_thread(self._read_file, temp_file)
-                
-                _LOGGER.debug("使用VAD处理音频")
-                processed_audio = await asyncio.to_thread(self.vad_processor.process_wav, original_audio)
-                
-                # 保存VAD处理后的音频
-                vad_temp_file = os.path.join(self.output_dir, f"vad_{uuid.uuid4()}.wav")
-                await asyncio.to_thread(self._write_file, vad_temp_file, processed_audio)
-                
-                # 替换为处理后的临时文件
-                temp_file = vad_temp_file
-            
             text = await self._recognize_audio(temp_file, sample_rate, language)
             # 使用正确的参数创建结果（根据新的错误日志，应为 text）
             return stt.SpeechResult(text=text)
