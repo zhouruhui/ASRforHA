@@ -82,12 +82,12 @@ class DoubaoProvider:
                 temp_file = vad_temp_file
             
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 使用正确的参数创建结果（根据错误日志，应为 result）
-            return stt.SpeechResult(result=text)
+            # 使用正确的参数创建结果（根据新的错误日志，应为 text）
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果（根据错误日志，应为 result）
-            return stt.SpeechResult(result="")
+            # 创建空结果（根据新的错误日志，应为 text）
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
