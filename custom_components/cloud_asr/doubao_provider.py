@@ -82,12 +82,12 @@ class DoubaoProvider:
                 temp_file = vad_temp_file
             
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 使用正确的参数创建结果（result而不是text）
-            return stt.SpeechResult(result=text)
+            # 使用正确的参数创建结果（text而不是result）
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果（使用result参数）
-            return stt.SpeechResult(result="")
+            # 创建空结果（使用text参数）
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -124,16 +124,17 @@ class DoubaoProvider:
         import uuid
         connect_id = str(uuid.uuid4())
         
+        # 根据最新文档更新鉴权信息
         headers = {
-            # 根据最新文档的鉴权信息
-            "X-Api-App-Key": self.appid,  # APP ID
-            "X-Api-Access-Key": self.access_token,  # Access Token
-            "X-Api-Resource-Id": self.cluster,  # 资源ID - 应为"volc.bigasr.sauc.duration"或"volc.bigasr.sauc.concurrent"
-            "X-Api-Connect-Id": connect_id,  # 跟踪ID
+            "X-Api-App-Key": self.appid,
+            "X-Api-Access-Key": self.access_token,
+            # 使用正确的资源ID格式
+            "X-Api-Resource-Id": self.cluster,  # 使用传入的cluster参数，而不是硬编码的值
+            "X-Api-Connect-Id": connect_id,
             "Content-Type": "application/json"
         }
         
-        # 准备连接参数 - 简化参数避免冗余字段
+        # 准备连接参数 - 简化参数
         request_params = {
             "format": "wav",
             "sample_rate": sample_rate,
@@ -146,10 +147,10 @@ class DoubaoProvider:
         elif language and language.startswith("en"):
             request_params["lang"] = "en"
             
-        # 添加调试信息
-        _LOGGER.debug("豆包API认证信息: App Key: %s, 集群: %s, Connect ID: %s",
+        # 添加详细调试信息
+        _LOGGER.debug("豆包API认证信息: App Key: %s, 资源ID: %s, Connect ID: %s",
                      self.appid, 
-                     self.cluster,
+                     headers["X-Api-Resource-Id"],
                      connect_id)
             
         ws_url = self.ws_url
@@ -161,7 +162,7 @@ class DoubaoProvider:
                 _LOGGER.debug("请求头: %s", {k: ('***' if k == 'X-Api-Access-Key' else v) for k, v in headers.items()})
                 _LOGGER.debug("请求参数: %s", request_params)
                 
-                # 使用预先创建的SSL上下文，避免阻塞
+                # 使用预创建的SSL上下文
                 async with session.ws_connect(
                     ws_url,
                     headers=headers,
