@@ -66,12 +66,12 @@ class DoubaoProvider:
         
         try:
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 使用正确的参数创建结果（根据新的错误日志，应为 text）
-            return stt.SpeechResult(text=text)
+            # 使用正确的参数创建结果（根据最新错误日志，应为 result）
+            return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果（根据新的错误日志，应为 text）
-            return stt.SpeechResult(text="")
+            # 创建空结果（根据最新错误日志，应为 result）
+            return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
             try:
@@ -112,8 +112,10 @@ class DoubaoProvider:
         headers = {
             "X-Api-App-Key": self.appid,
             "X-Api-Access-Key": self.access_token,
-            # 使用正确的资源ID格式
-            "X-Api-Resource-Id": self.cluster,  # 使用传入的cluster参数，而不是硬编码的值
+            # 使用用户在 configuration.yaml 中配置的 cluster 值作为资源ID
+            # !! 用户必须确保此值是火山引擎提供的有效资源ID !!
+            # 例如: "volc.bigasr.sauc.duration" 或 "volc.bigasr.sauc.concurrent"
+            "X-Api-Resource-Id": self.cluster,
             "X-Api-Connect-Id": connect_id,
             "Content-Type": "application/json"
         }
