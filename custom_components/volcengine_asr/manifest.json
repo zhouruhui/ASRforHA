@@ -1,0 +1,14 @@
+{
+  "domain": "volcengine_asr",
+  "name": "Volcengine ASR Integration",
+  "documentation": "https://github.com/manus-team/ha-volcengine-asr",
+  "version": "0.1.0",
+  "codeowners": ["@ManusTeam"],
+  "requirements": ["websockets"],
+  "iot_class": "cloud_push",
+  "loggers": ["custom_components.volcengine_asr"],
+  "dependencies": [],
+  "after_dependencies": ["http"],
+  "config_flow": false
+}
+

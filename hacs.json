@@ -1,8 +1,8 @@
 {
-  "name": "中文云语音识别 (Chinese Cloud ASR)",
+  "name": "火山ASR",
   "content_in_root": false,
   "render_readme": true,
-  "domains": ["cloud_asr"],
+  "domains": ["volcengine_asr"],
   "country": ["CN"],
   "homeassistant": "2023.8.0"
 } 
