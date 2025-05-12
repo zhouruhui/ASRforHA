@@ -100,5 +100,6 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
             return result
         except Exception as err:
             _LOGGER.exception("处理音频流失败: %s", err)
-            # 固定使用text参数来创建结果
-            return stt.SpeechResult(text="") 
+            # 使用result参数创建SpeechResult
+            _LOGGER.debug("创建备用SpeechResult(result)")
+            return stt.SpeechResult(result="") 

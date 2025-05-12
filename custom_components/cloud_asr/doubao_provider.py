@@ -68,14 +68,14 @@ class DoubaoProvider:
             text = await self._recognize_audio(temp_file, sample_rate, language)
             _LOGGER.debug("成功获取识别结果: '%s'", text)
             
-            # 直接创建固定格式的SpeechResult
-            _LOGGER.debug("使用固定格式创建SpeechResult")
-            return stt.SpeechResult(text=text)
+            # 直接创建固定格式的SpeechResult，使用result参数
+            _LOGGER.debug("使用固定格式创建SpeechResult(result)")
+            return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果，固定使用text参数
-            _LOGGER.debug("创建空的SpeechResult")
-            return stt.SpeechResult(text="")
+            # 创建空结果，使用result参数
+            _LOGGER.debug("创建空的SpeechResult(result)")
+            return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
             try:
