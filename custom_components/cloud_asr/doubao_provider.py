@@ -43,8 +43,8 @@ class DoubaoProvider:
         # 根据文档："The WebSocket API for large language model speech recognition uses wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         self.ws_url = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
         
-        # 不再需要存储 ssl_context
-        # self.ssl_context = _SSL_CONTEXT
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
         
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
@@ -66,14 +66,29 @@ class DoubaoProvider:
         
         try:
             text = await self._recognize_audio(temp_file, sample_rate, language)
-            # 使用正确的参数创建结果（根据最新错误日志，应为 result）
-            _LOGGER.debug("成功获取识别结果，准备创建 SpeechResult(result='%s')", text)
-            return stt.SpeechResult(result=text)
+            _LOGGER.debug("成功获取识别结果: '%s'", text)
+            
+            # 检查HA版本，适配不同版本的SpeechResult
+            try:
+                # 尝试使用较新版本的构造函数 (2023.8+)
+                return stt.SpeechResult(text)
+            except TypeError:
+                # 尝试使用 'result' 参数
+                try:
+                    return stt.SpeechResult(result=text)
+                except TypeError:
+                    # 尝试使用 'text' 参数
+                    return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果（根据最新错误日志，应为 result）
-            _LOGGER.debug("发生错误，准备创建空的 SpeechResult(result='')")
-            return stt.SpeechResult(result="")
+            # 创建空结果
+            try:
+                return stt.SpeechResult("")
+            except TypeError:
+                try:
+                    return stt.SpeechResult(result="")
+                except TypeError:
+                    return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -159,53 +174,59 @@ class DoubaoProvider:
                 _LOGGER.debug("请求头: %s", {k: ('***' if k == 'X-Api-Access-Key' else v) for k, v in headers.items()})
                 _LOGGER.debug("请求参数: %s", request_params)
                 
-                # 移除明确的 ssl 上下文，让 aiohttp 自动处理
-                async with session.ws_connect(
-                    ws_url,
-                    headers=headers,
-                    timeout=DEFAULT_TIMEOUT,
-                    heartbeat=30,
-                    # ssl=self.ssl_context  # 移除此行
-                ) as ws:
-                    # 发送初始请求参数
-                    _LOGGER.debug("发送初始化参数")
-                    await ws.send_json(request_params)
-                    
-                    # 读取音频文件并发送
-                    audio_data = await asyncio.to_thread(self._read_file, audio_file)
-                    _LOGGER.debug("读取到音频数据: %d 字节", len(audio_data))
-                    
-                    # 根据火山引擎WebSocket协议，分批发送音频数据
-                    chunk_size = 4096
-                    for i in range(0, len(audio_data), chunk_size):
-                        chunk = audio_data[i:i+chunk_size]
-                        await ws.send_bytes(chunk)
+                # 使用标准WebSocket连接，让aiohttp处理SSL
+                try:
+                    async with session.ws_connect(
+                        ws_url,
+                        headers=headers,
+                        timeout=DEFAULT_TIMEOUT,
+                        heartbeat=30
+                    ) as ws:
+                        # 发送初始请求参数
+                        _LOGGER.debug("发送初始化参数")
+                        await ws.send_json(request_params)
                         
-                    # 发送结束标志
-                    _LOGGER.debug("发送结束标志")
-                    await ws.send_json({"end": True})
-                    
-                    # 接收并解析结果
-                    final_text = ""
-                    _LOGGER.debug("已发送音频数据，等待豆包API响应")
-                    async with async_timeout.timeout(DEFAULT_TIMEOUT):
-                        async for msg in ws:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                data = json.loads(msg.data)
-                                _LOGGER.debug("豆包API响应: %s", data)
-                                
-                                # 处理不同类型的结果
-                                if "text" in data:
-                                    final_text = data["text"]
-                                
-                                # 判断是否结束
-                                if data.get("status", "") == "final" or "completed" in data:
-                                    break
-                            elif msg.type == aiohttp.WSMsgType.ERROR:
-                                _LOGGER.error("WebSocket连接错误: %s", ws.exception())
-                                break
-                    
-                    return final_text
+                        # 读取音频文件并发送
+                        audio_data = await asyncio.to_thread(self._read_file, audio_file)
+                        _LOGGER.debug("读取到音频数据: %d 字节", len(audio_data))
+                        
+                        # 根据火山引擎WebSocket协议，分批发送音频数据
+                        chunk_size = 4096
+                        for i in range(0, len(audio_data), chunk_size):
+                            chunk = audio_data[i:i+chunk_size]
+                            await ws.send_bytes(chunk)
+                            
+                        # 发送结束标志
+                        _LOGGER.debug("发送结束标志")
+                        await ws.send_json({"end": True})
+                        
+                        # 接收并解析结果
+                        final_text = ""
+                        _LOGGER.debug("已发送音频数据，等待豆包API响应")
+                        try:
+                            async with async_timeout.timeout(DEFAULT_TIMEOUT):
+                                async for msg in ws:
+                                    if msg.type == aiohttp.WSMsgType.TEXT:
+                                        data = json.loads(msg.data)
+                                        _LOGGER.debug("豆包API响应: %s", data)
+                                        
+                                        # 处理不同类型的结果
+                                        if "text" in data:
+                                            final_text = data["text"]
+                                        
+                                        # 判断是否结束
+                                        if data.get("status", "") == "final" or "completed" in data:
+                                            break
+                                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                                        _LOGGER.error("WebSocket连接错误: %s", ws.exception())
+                                        break
+                        except asyncio.TimeoutError:
+                            _LOGGER.error("等待豆包API响应超时")
+                        
+                        return final_text
+                except aiohttp.ClientError as e:
+                    _LOGGER.error("建立WebSocket连接失败: %s", e)
+                    return ""
                     
         except asyncio.TimeoutError:
             _LOGGER.error("火山引擎(豆包)语音识别请求超时")

@@ -27,7 +27,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# 在模块加载时（非事件循环中）创建SSL上下文
+# 创建SSL上下文
 _SSL_CONTEXT = ssl.create_default_context()
 _SSL_CONTEXT.check_hostname = False
 _SSL_CONTEXT.verify_mode = ssl.CERT_NONE
@@ -49,8 +49,11 @@ class TencentProvider:
         self.algorithm = "TC3-HMAC-SHA256"
         self.url = "https://" + self.host
         
-        # 使用模块级别的SSL上下文，避免在初始化时创建
+        # 使用模块级别的SSL上下文
         self.ssl_context = _SSL_CONTEXT
+        
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
         
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
@@ -77,12 +80,29 @@ class TencentProvider:
                 
             # 调用腾讯云API进行识别
             text = await self._call_tencent_asr(audio_base64, sample_rate, language)
-            # 使用正确的参数创建结果（text而不是result）
-            return stt.SpeechResult(text=text)
+            _LOGGER.debug("成功获取识别结果: '%s'", text)
+            
+            # 检查HA版本，适配不同版本的SpeechResult
+            try:
+                # 尝试使用较新版本的构造函数 (2023.8+)
+                return stt.SpeechResult(text)
+            except TypeError:
+                # 尝试使用 'result' 参数
+                try:
+                    return stt.SpeechResult(result=text)
+                except TypeError:
+                    # 尝试使用 'text' 参数
+                    return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("腾讯云语音识别失败: %s", err)
-            # 创建空结果（使用text参数）
-            return stt.SpeechResult(text="")
+            # 创建空结果
+            try:
+                return stt.SpeechResult("")
+            except TypeError:
+                try:
+                    return stt.SpeechResult(result="")
+                except TypeError:
+                    return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -139,49 +159,62 @@ class TencentProvider:
         timestamp = int(time.time())
         
         # 生成签名
-        signature = await self._generate_signature(req_param, timestamp)
-        
-        # 准备请求头
-        headers = {
-            "Content-Type": "application/json",
-            "Host": self.host,
-            "X-TC-Action": "SentenceRecognition",
-            "X-TC-Version": self.version,
-            "X-TC-Timestamp": str(timestamp),
-            "X-TC-Region": self.region,
-            "Authorization": signature
-        }
-        
-        # 发送请求
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.url,
-                    headers=headers,
-                    json=req_param,
-                    timeout=DEFAULT_TIMEOUT,
-                    ssl=self.ssl_context  # 使用预先创建的SSL上下文
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        _LOGGER.debug("腾讯云ASR响应: %s", result)
-                        
-                        if "Response" in result and "Result" in result["Response"]:
-                            return result["Response"]["Result"]
-                        elif "Response" in result and "Error" in result["Response"]:
-                            error_msg = result["Response"]["Error"].get("Message", "未知错误")
-                            _LOGGER.error("腾讯云ASR错误: %s", error_msg)
-                    else:
-                        _LOGGER.error("腾讯云ASR请求失败，状态码: %s", response.status)
-        except asyncio.TimeoutError:
-            _LOGGER.error("腾讯云ASR请求超时")
+            signature = await self._generate_signature(req_param, timestamp)
+            
+            # 准备请求头
+            headers = {
+                "Content-Type": "application/json",
+                "Host": self.host,
+                "X-TC-Action": "SentenceRecognition",
+                "X-TC-Version": self.version,
+                "X-TC-Timestamp": str(timestamp),
+                "X-TC-Region": self.region,
+                "Authorization": signature
+            }
+            
+            _LOGGER.debug("腾讯云ASR请求参数: %s", {k: '***' if k == 'Data' else v for k, v in req_param.items()})
+            
+            # 发送请求
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        self.url,
+                        headers=headers,
+                        json=req_param,
+                        timeout=DEFAULT_TIMEOUT,
+                        ssl=self.ssl_context
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            _LOGGER.debug("腾讯云ASR响应: %s", result)
+                            
+                            if "Response" in result and "Result" in result["Response"]:
+                                return result["Response"]["Result"]
+                            elif "Response" in result and "Error" in result["Response"]:
+                                error_msg = result["Response"]["Error"].get("Message", "未知错误")
+                                _LOGGER.error("腾讯云ASR错误: %s", error_msg)
+                        else:
+                            _LOGGER.error("腾讯云ASR请求失败，状态码: %s", response.status)
+                            response_text = await response.text()
+                            _LOGGER.error("错误详情: %s", response_text)
+            except asyncio.TimeoutError:
+                _LOGGER.error("腾讯云ASR请求超时")
+            except aiohttp.ClientError as e:
+                _LOGGER.error("腾讯云ASR请求客户端错误: %s", e)
+            except Exception as err:
+                _LOGGER.error("腾讯云ASR请求异常: %s", err)
         except Exception as err:
-            _LOGGER.error("腾讯云ASR请求异常: %s", err)
+            _LOGGER.error("生成签名失败: %s", err)
             
         return ""
         
     async def _generate_signature(self, params, timestamp):
         """生成腾讯云API签名。"""
+        if not self.secret_id or not self.secret_key:
+            _LOGGER.error("缺少腾讯云API密钥，请检查配置")
+            raise ValueError("缺少腾讯云API密钥，请检查配置")
+            
         # 1. 组装规范请求字符串
         request_timestamp = timestamp
         request_date = datetime.utcfromtimestamp(request_timestamp).strftime("%Y-%m-%d")

@@ -18,15 +18,17 @@ async def async_get_engine(hass, config, discovery_info=None):
     这是新版Home Assistant STT API需要的入口点方法。
     """
     if discovery_info is None:
+        _LOGGER.error("未提供discovery_info，无法创建STT引擎")
         return None
 
     name = discovery_info["name"]
     provider = hass.data[DOMAIN].get(name)
 
     if provider is None:
-        _LOGGER.error(f"未找到名为 {name} 的ASR提供程序")
+        _LOGGER.error("未找到名为 %s 的ASR提供程序", name)
         return None
 
+    _LOGGER.info("创建STT引擎: %s", name)
     return CloudSpeechToTextEntity(name, provider)
 
 
@@ -37,6 +39,7 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
         """初始化语音转文字实体。"""
         self._name = name
         self.provider = provider
+        _LOGGER.debug("初始化语音转文字实体: %s", self._name)
         
     @property
     def name(self):
@@ -51,6 +54,7 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
         在legacy.py中会尝试设置name属性。
         """
         self._name = value
+        _LOGGER.debug("设置实体名称为: %s", value)
 
     @property
     def supported_languages(self):
@@ -85,7 +89,21 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
     async def async_process_audio_stream(self, metadata, stream):
         """处理音频流并返回识别结果。"""
         try:
+            _LOGGER.debug(
+                "开始处理音频流，语言: %s, 格式: %s, 编解码器: %s, 采样率: %s", 
+                metadata.language,
+                metadata.format,
+                metadata.codec,
+                metadata.sample_rate
+            )
             return await self.provider.async_process_audio_stream(metadata, stream)
         except Exception as err:
-            _LOGGER.error("处理音频流失败: %s", err)
-            return stt.SpeechResult(result="") 
+            _LOGGER.exception("处理音频流失败: %s", err)
+            # 尝试使用不同的SpeechResult构造函数，以适应不同版本的HA
+            try:
+                return stt.SpeechResult("")
+            except TypeError:
+                try:
+                    return stt.SpeechResult(result="")
+                except TypeError:
+                    return stt.SpeechResult(text="") 
