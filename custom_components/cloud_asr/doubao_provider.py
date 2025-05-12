@@ -68,14 +68,14 @@ class DoubaoProvider:
             text = await self._recognize_audio(temp_file, sample_rate, language)
             _LOGGER.debug("成功获取识别结果: '%s'", text)
             
-            # 直接创建固定格式的SpeechResult，使用result参数
-            _LOGGER.debug("使用固定格式创建SpeechResult(result)")
-            return stt.SpeechResult(result=text)
+            # 直接创建固定格式的SpeechResult，使用text参数
+            _LOGGER.debug("使用固定格式创建SpeechResult(text)")
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果，使用result参数
-            _LOGGER.debug("创建空的SpeechResult(result)")
-            return stt.SpeechResult(result="")
+            # 创建空结果，使用text参数
+            _LOGGER.debug("创建空的SpeechResult(text)")
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -163,12 +163,14 @@ class DoubaoProvider:
                 
                 # 使用v1协议版本尝试兼容API服务
                 try:
-                    # 不指定任何协议版本，让服务器自行选择
+                    # 明确指定一个可能被火山引擎支持的协议版本
                     async with session.ws_connect(
                         ws_url,
                         headers=headers,
                         timeout=DEFAULT_TIMEOUT,
                         heartbeat=30,
+                        # 使用火山引擎可能支持的协议版本
+                        protocols=["v1.sauc.websocket", "v1.sauc", "v1.websocket"],
                         max_msg_size=0  # 不限制消息大小
                     ) as ws:
                         # 发送初始请求参数
@@ -229,6 +231,8 @@ class DoubaoProvider:
                                 ws_url,
                                 headers=headers,
                                 timeout=DEFAULT_TIMEOUT,
+                                # 使用火山引擎可能支持的协议版本
+                                protocols=["v1.sauc.websocket", "v1.sauc", "v1.websocket"],
                                 max_msg_size=0
                             ) as ws:
                                 # 这里重复上面的逻辑
