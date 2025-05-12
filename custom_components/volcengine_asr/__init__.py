@@ -5,6 +5,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers import discovery # Added import
 
 DOMAIN = "volcengine_asr"
 _LOGGER = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     # Forward the setup to the stt platform.
     hass.async_create_task(
-        hass.helpers.discovery.async_load_platform("stt", DOMAIN, {}, config)
+        discovery.async_load_platform(hass, "stt", DOMAIN, {}, config) # Changed call
     )
     _LOGGER.info("Volcengine ASR integration setup complete")
     return True
