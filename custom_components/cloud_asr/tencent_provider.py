@@ -82,27 +82,14 @@ class TencentProvider:
             text = await self._call_tencent_asr(audio_base64, sample_rate, language)
             _LOGGER.debug("成功获取识别结果: '%s'", text)
             
-            # 检查HA版本，适配不同版本的SpeechResult
-            try:
-                # 尝试使用较新版本的构造函数 (2023.8+)
-                return stt.SpeechResult(text)
-            except TypeError:
-                # 尝试使用 'result' 参数
-                try:
-                    return stt.SpeechResult(result=text)
-                except TypeError:
-                    # 尝试使用 'text' 参数
-                    return stt.SpeechResult(text=text)
+            # 直接使用固定格式创建SpeechResult
+            _LOGGER.debug("使用固定格式创建SpeechResult")
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("腾讯云语音识别失败: %s", err)
-            # 创建空结果
-            try:
-                return stt.SpeechResult("")
-            except TypeError:
-                try:
-                    return stt.SpeechResult(result="")
-                except TypeError:
-                    return stt.SpeechResult(text="")
+            # 创建空结果，使用固定格式
+            _LOGGER.debug("创建空的SpeechResult")
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:

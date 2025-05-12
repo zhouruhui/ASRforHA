@@ -68,27 +68,14 @@ class DoubaoProvider:
             text = await self._recognize_audio(temp_file, sample_rate, language)
             _LOGGER.debug("成功获取识别结果: '%s'", text)
             
-            # 检查HA版本，适配不同版本的SpeechResult
-            try:
-                # 尝试使用较新版本的构造函数 (2023.8+)
-                return stt.SpeechResult(text)
-            except TypeError:
-                # 尝试使用 'result' 参数
-                try:
-                    return stt.SpeechResult(result=text)
-                except TypeError:
-                    # 尝试使用 'text' 参数
-                    return stt.SpeechResult(text=text)
+            # 直接创建固定格式的SpeechResult
+            _LOGGER.debug("使用固定格式创建SpeechResult")
+            return stt.SpeechResult(text=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果
-            try:
-                return stt.SpeechResult("")
-            except TypeError:
-                try:
-                    return stt.SpeechResult(result="")
-                except TypeError:
-                    return stt.SpeechResult(text="")
+            # 创建空结果，固定使用text参数
+            _LOGGER.debug("创建空的SpeechResult")
+            return stt.SpeechResult(text="")
         finally:
             # 清理临时文件
             try:
@@ -174,13 +161,16 @@ class DoubaoProvider:
                 _LOGGER.debug("请求头: %s", {k: ('***' if k == 'X-Api-Access-Key' else v) for k, v in headers.items()})
                 _LOGGER.debug("请求参数: %s", request_params)
                 
-                # 使用标准WebSocket连接，让aiohttp处理SSL
+                # 修复WebSocket协议版本问题
                 try:
+                    # 指定低版本的WebSocket协议以兼容API服务
                     async with session.ws_connect(
                         ws_url,
                         headers=headers,
                         timeout=DEFAULT_TIMEOUT,
-                        heartbeat=30
+                        heartbeat=30,
+                        protocols=("v1.sauc.websocket",),  # 添加协议版本
+                        max_msg_size=0  # 不限制消息大小
                     ) as ws:
                         # 发送初始请求参数
                         _LOGGER.debug("发送初始化参数")
@@ -210,6 +200,11 @@ class DoubaoProvider:
                                         data = json.loads(msg.data)
                                         _LOGGER.debug("豆包API响应: %s", data)
                                         
+                                        # 检查错误
+                                        if "error" in data:
+                                            _LOGGER.error("豆包API返回错误: %s", data["error"])
+                                            continue
+                                            
                                         # 处理不同类型的结果
                                         if "text" in data:
                                             final_text = data["text"]
@@ -226,6 +221,31 @@ class DoubaoProvider:
                         return final_text
                 except aiohttp.ClientError as e:
                     _LOGGER.error("建立WebSocket连接失败: %s", e)
+                    # 尝试使用aiohttp内置客户端
+                    _LOGGER.debug("尝试使用Home Assistant的aiohttp_client")
+                    session = aiohttp_client.async_get_clientsession(hass=None)
+                    if session:
+                        try:
+                            async with session.ws_connect(
+                                ws_url,
+                                headers=headers,
+                                timeout=DEFAULT_TIMEOUT,
+                                protocols=("v1.sauc.websocket",),
+                                max_msg_size=0
+                            ) as ws:
+                                # 这里重复上面的逻辑
+                                _LOGGER.debug("使用HA客户端重新连接")
+                                # 简化版本，只发送初始参数
+                                await ws.send_json(request_params)
+                                # 读取结果
+                                async for msg in ws:
+                                    if msg.type == aiohttp.WSMsgType.TEXT:
+                                        data = json.loads(msg.data)
+                                        _LOGGER.debug("豆包API响应(备用连接): %s", data)
+                                        if "text" in data:
+                                            return data["text"]
+                        except Exception as err:
+                            _LOGGER.error("备用连接也失败: %s", err)
                     return ""
                     
         except asyncio.TimeoutError:

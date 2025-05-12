@@ -96,14 +96,9 @@ class CloudSpeechToTextEntity(stt.SpeechToTextEntity):
                 metadata.codec,
                 metadata.sample_rate
             )
-            return await self.provider.async_process_audio_stream(metadata, stream)
+            result = await self.provider.async_process_audio_stream(metadata, stream)
+            return result
         except Exception as err:
             _LOGGER.exception("处理音频流失败: %s", err)
-            # 尝试使用不同的SpeechResult构造函数，以适应不同版本的HA
-            try:
-                return stt.SpeechResult("")
-            except TypeError:
-                try:
-                    return stt.SpeechResult(result="")
-                except TypeError:
-                    return stt.SpeechResult(text="") 
+            # 固定使用text参数来创建结果
+            return stt.SpeechResult(text="") 
