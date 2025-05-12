@@ -68,14 +68,14 @@ class DoubaoProvider:
             text = await self._recognize_audio(temp_file, sample_rate, language)
             _LOGGER.debug("成功获取识别结果: '%s'", text)
             
-            # 直接创建固定格式的SpeechResult，使用text参数
-            _LOGGER.debug("使用固定格式创建SpeechResult(text)")
-            return stt.SpeechResult(text=text)
+            # 直接创建固定格式的SpeechResult，使用result参数
+            _LOGGER.debug("使用固定格式创建SpeechResult(result)")
+            return stt.SpeechResult(result=text)
         except Exception as err:
             _LOGGER.error("火山引擎(豆包)语音识别失败: %s", err)
-            # 创建空结果，使用text参数
-            _LOGGER.debug("创建空的SpeechResult(text)")
-            return stt.SpeechResult(text="")
+            # 创建空结果，使用result参数
+            _LOGGER.debug("创建空的SpeechResult(result)")
+            return stt.SpeechResult(result="")
         finally:
             # 清理临时文件
             try:
@@ -161,9 +161,9 @@ class DoubaoProvider:
                 _LOGGER.debug("请求头: %s", {k: ('***' if k == 'X-Api-Access-Key' else v) for k, v in headers.items()})
                 _LOGGER.debug("请求参数: %s", request_params)
                 
-                # 修复WebSocket协议版本问题
+                # 使用v1协议版本尝试兼容API服务
                 try:
-                    # 使用默认WebSocket协议以兼容API服务
+                    # 不指定任何协议版本，让服务器自行选择
                     async with session.ws_connect(
                         ws_url,
                         headers=headers,
