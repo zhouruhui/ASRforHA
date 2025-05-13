@@ -14,7 +14,6 @@ from homeassistant.components.stt import (
     AudioSampleRates,
     SpeechToTextEntity,
 )
-# Import SpeechMetadata, SpeechResult, SpeechResultState from the new location
 from homeassistant.components.stt.models import (
     SpeechMetadata,
     SpeechResult,
@@ -81,13 +80,14 @@ class VolcengineASRProvider(SpeechToTextEntity):
         """Initialize the provider."""
         self.hass = hass
         self._config = config
-        self._name = "Volcengine ASR"
+        # Set the official entity name using _attr_name for HA >= 2021.7
+        self._attr_name = "Volcengine ASR" 
+        # Also set self.name for compatibility with older HA versions or legacy loaders
+        self.name = "Volcengine ASR" # This can be overwritten by legacy loader without error
         self._connect_id = str(uuid.uuid4())
 
-    @property
-    def name(self) -> str:
-        """Return the name of the STT engine."""
-        return self._name
+    # The @property def name(self) is removed, 
+    # as the base Entity class will provide it based on _attr_name.
 
     @property
     def supported_languages(self) -> list[str]:
@@ -232,10 +232,8 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 if final_text:
                     return SpeechResult(final_text, SpeechResultState.SUCCESS)
                 else:
-                    # If final_text is empty but no specific error occurred before, 
-                    # it might be a valid empty transcription or an unhandled server response.
                     _LOGGER.warning("ASR result is empty.")
-                    return SpeechResult(None, SpeechResultState.SUCCESS) # Or .ERROR depending on desired behavior for empty result
+                    return SpeechResult(None, SpeechResultState.SUCCESS) 
 
         except websockets.exceptions.InvalidURI:
             _LOGGER.error(f"Invalid WebSocket URI: {service_url}")
