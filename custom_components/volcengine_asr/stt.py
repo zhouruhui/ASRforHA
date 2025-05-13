@@ -6,9 +6,6 @@ import uuid
 import struct
 import aiohttp # Import aiohttp
 
-# Remove direct websockets import if fully replaced by aiohttp for connect
-# import websockets 
-
 from homeassistant.components.stt import (
     AudioBitRates,
     AudioChannels,
@@ -119,7 +116,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
         return [AudioChannels.CHANNEL_MONO]
     
     async def async_process_audio_stream(
-        self, metadata: SpeechMetadata, stream: asyncio.StreamReader
+        self, metadata: SpeechMetadata, stream: asyncio.StreamReader # stream is actually an async_generator
     ) -> SpeechResult:
         """Process an audio stream to STT service."""
         _LOGGER.debug(f"Processing audio stream with metadata: {metadata}")
@@ -172,6 +169,8 @@ class VolcengineASRProvider(SpeechToTextEntity):
         }
 
         session = async_get_clientsession(self.hass)
+        final_text_parts = []
+        server_marked_final = False # Flag to see if server sent a "final" type message
 
         try:
             async with session.ws_connect(service_url, headers=custom_headers) as websocket:
@@ -180,87 +179,116 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 payload_json = json.dumps(full_client_request_payload).encode("utf-8")
                 msg_header = struct.pack(">BBBB", 0x11, 0x10, 0x10, 0x00)
                 payload_size = struct.pack(">I", len(payload_json))
-                await websocket.send_bytes(msg_header + payload_size + payload_json) # Use send_bytes for aiohttp
+                await websocket.send_bytes(msg_header + payload_size + payload_json)
                 _LOGGER.debug(f"Sent Full Client Request: {full_client_request_payload}")
 
-                chunk_size = volc_audio_params["rate"] * volc_audio_params["bits"] // 8 * volc_audio_params["channel"] * 200 // 1000
-                is_final_chunk = False
-                final_text_parts = []
-
-                while not is_final_chunk:
-                    audio_chunk = await stream.read(chunk_size)
-                    if not audio_chunk:
-                        is_final_chunk = True
+                # Process audio stream using async for as stream is an async_generator
+                async for audio_chunk in stream:
+                    if not audio_chunk: # Should not happen with async for, but good practice
+                        continue
                     
-                    flags = 0b0010 if is_final_chunk else 0b0000
+                    flags = 0b0000 # Not the final chunk from this loop
                     msg_type_flags = (0b0010 << 4) | flags
                     audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
                     audio_payload_size = struct.pack(">I", len(audio_chunk))
                     
-                    await websocket.send_bytes(audio_header + audio_payload_size + audio_chunk) # Use send_bytes
-                    _LOGGER.debug(f"Sent audio chunk, size: {len(audio_chunk)}, final: {is_final_chunk}")
+                    await websocket.send_bytes(audio_header + audio_payload_size + audio_chunk)
+                    _LOGGER.debug(f"Sent audio chunk, size: {len(audio_chunk)}")
 
+                    # Attempt to receive response after sending each chunk (non-blocking or with timeout)
                     try:
-                        # For aiohttp, receive using websocket.receive()
-                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=10.0)
-                        
+                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=0.1) # Short timeout
                         if ws_msg.type == aiohttp.WSMsgType.BINARY:
                             response_data = ws_msg.data
                             resp_header_data = response_data[:4]
                             resp_payload_data = response_data[8:]
                             resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
-
-                            if resp_msg_type == 0b1001: 
+                            if resp_msg_type == 0b1001:
                                 resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
                                 _LOGGER.debug(f"Received ASR response: {resp_payload_json}")
                                 if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
                                     for res_item in resp_payload_json.get("result", []):
                                         final_text_parts.append(res_item.get("text", ""))
                                     if resp_payload_json.get("type") == "final":
-                                        is_final_chunk = True 
-                                        break 
-                                elif resp_payload_json.get("header", {}).get("status") != 20000000:
-                                    _LOGGER.error(f"Volcengine ASR Error in payload: {resp_payload_json}")
-                                    return SpeechResult(None, SpeechResultState.ERROR)
-                            elif resp_msg_type == 0b1111: 
-                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode("utf-8", errors="ignore")}")
+                                        server_marked_final = True
+                                        # If server marks final, we might not need to send more audio or the final empty chunk
+                                        # However, the ASR protocol might still expect the audio stream to formally end.
+                            elif resp_msg_type == 0b1111:
+                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode('utf-8', errors='ignore')}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
-                            else:
-                                _LOGGER.warning(f"Received unexpected binary message type: {resp_msg_type}")
-                        elif ws_msg.type == aiohttp.WSMsgType.TEXT:
-                             _LOGGER.warning(f"Received unexpected TEXT message from ASR: {ws_msg.data}")
                         elif ws_msg.type == aiohttp.WSMsgType.ERROR:
-                            _LOGGER.error(f"aiohttp WebSocket connection error: {websocket.exception()}")
+                            _LOGGER.error(f"aiohttp WebSocket connection error during receive: {websocket.exception()}")
                             return SpeechResult(None, SpeechResultState.ERROR)
                         elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
-                            _LOGGER.info("aiohttp WebSocket connection closed by server.")
-                            # Decide if this is an error or normal termination based on context
-                            if not final_text_parts and not is_final_chunk:
-                                 return SpeechResult(None, SpeechResultState.ERROR)
-                            break # Exit receive loop if connection closed
+                            _LOGGER.info("aiohttp WebSocket connection closed by server during audio send.")
+                            # This might be an error if we haven't finished sending all audio
+                            return SpeechResult(" ".join(filter(None, final_text_parts)) or None, SpeechResultState.ERROR if not server_marked_final else SpeechResultState.SUCCESS)
 
                     except asyncio.TimeoutError:
-                        _LOGGER.warning("Timeout waiting for ASR response. Continuing to send audio if not final.")
-                        if is_final_chunk:
-                            _LOGGER.error("Timeout waiting for final ASR response after sending last audio chunk.")
-                            return SpeechResult(None, SpeechResultState.ERROR)
-                    # Removed websockets.exceptions.ConnectionClosed, aiohttp handles this via WSMsgType.CLOSED/ERROR
+                        _LOGGER.debug("No immediate response from ASR, continuing to send audio.")
                     except Exception as e:
-                        _LOGGER.error(f"Error processing ASR response with aiohttp: {e}", exc_info=True)
+                        _LOGGER.error(f"Error processing ASR response during audio send: {e}", exc_info=True)
+                        # Continue sending audio, but log this error
+                
+                # After iterating through all audio_chunks from the stream, send a final empty chunk
+                _LOGGER.debug("Finished sending all audio chunks from stream. Sending final empty chunk.")
+                flags = 0b0010 # Mark as final chunk
+                msg_type_flags = (0b0010 << 4) | flags
+                final_audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
+                final_audio_payload_size = struct.pack(">I", 0) # Empty payload
+                await websocket.send_bytes(final_audio_header + final_audio_payload_size)
+                _LOGGER.debug("Sent final empty audio chunk.")
+
+                # Now, wait for the final ASR responses
+                # Loop to receive messages until a final response or timeout/error
+                while not server_marked_final:
+                    try:
+                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=10.0) # Longer timeout for final result
+                        if ws_msg.type == aiohttp.WSMsgType.BINARY:
+                            response_data = ws_msg.data
+                            resp_header_data = response_data[:4]
+                            resp_payload_data = response_data[8:]
+                            resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
+
+                            if resp_msg_type == 0b1001:
+                                resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
+                                _LOGGER.debug(f"Received ASR response (final wait): {resp_payload_json}")
+                                if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
+                                    for res_item in resp_payload_json.get("result", []):
+                                        final_text_parts.append(res_item.get("text", ""))
+                                    if resp_payload_json.get("type") == "final":
+                                        server_marked_final = True
+                                        break # Got the final message
+                                elif resp_payload_json.get("header", {}).get("status") != 20000000:
+                                    _LOGGER.error(f"Volcengine ASR Error in payload (final wait): {resp_payload_json}")
+                                    return SpeechResult(None, SpeechResultState.ERROR)
+                            elif resp_msg_type == 0b1111:
+                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message (final wait): {resp_payload_data.decode('utf-8', errors='ignore')}")
+                                return SpeechResult(None, SpeechResultState.ERROR)
+                        elif ws_msg.type == aiohttp.WSMsgType.ERROR:
+                            _LOGGER.error(f"aiohttp WebSocket connection error (final wait): {websocket.exception()}")
+                            return SpeechResult(None, SpeechResultState.ERROR)
+                        elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
+                            _LOGGER.info("aiohttp WebSocket connection closed by server (final wait).")
+                            break # Connection closed, process what we have
+                    except asyncio.TimeoutError:
+                        _LOGGER.error("Timeout waiting for final ASR response after sending all audio.")
+                        break # Timeout, process what we have
+                    except Exception as e:
+                        _LOGGER.error(f"Error processing final ASR response: {e}", exc_info=True)
                         return SpeechResult(None, SpeechResultState.ERROR)
                 
                 final_text = " ".join(filter(None, final_text_parts))
                 _LOGGER.info(f"Final recognized text: {final_text}")
-                if final_text or is_final_chunk: # Consider it success if we reached the end, even if text is empty
+                if final_text or server_marked_final: # If server said final, or we got text
                     return SpeechResult(final_text if final_text else None, SpeechResultState.SUCCESS)
                 else:
-                    _LOGGER.warning("ASR result is empty and not marked as final.")
-                    return SpeechResult(None, SpeechResultState.ERROR)
+                    _LOGGER.warning("ASR result is empty and not marked as final by server.")
+                    return SpeechResult(None, SpeechResultState.ERROR) # Or SUCCESS if empty is acceptable
         
-        except aiohttp.ClientError as e: # Catch aiohttp specific client errors
+        except aiohttp.ClientError as e:
             _LOGGER.error(f"aiohttp client connection error: {e}", exc_info=True)
             return SpeechResult(None, SpeechResultState.ERROR)
-        # Removed websockets.exceptions.InvalidURI and websockets.exceptions.WebSocketException
         except Exception as e:
             _LOGGER.error(f"An unexpected error occurred in Volcengine ASR (aiohttp): {e}", exc_info=True)
             return SpeechResult(None, SpeechResultState.ERROR)
