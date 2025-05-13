@@ -80,14 +80,9 @@ class VolcengineASRProvider(SpeechToTextEntity):
         """Initialize the provider."""
         self.hass = hass
         self._config = config
-        # Set the official entity name using _attr_name for HA >= 2021.7
-        self._attr_name = "Volcengine ASR" 
-        # Also set self.name for compatibility with older HA versions or legacy loaders
-        self.name = "Volcengine ASR" # This can be overwritten by legacy loader without error
+        self._attr_name = "Volcengine ASR"
+        self.name = "Volcengine ASR" 
         self._connect_id = str(uuid.uuid4())
-
-    # The @property def name(self) is removed, 
-    # as the base Entity class will provide it based on _attr_name.
 
     @property
     def supported_languages(self) -> list[str]:
@@ -97,27 +92,33 @@ class VolcengineASRProvider(SpeechToTextEntity):
     @property
     def supported_formats(self) -> list[AudioFormats]:
         """Return a list of supported formats."""
-        return [AudioFormats.PCM]
+        # Volcengine ASR expects raw PCM. HA typically sends WAV container for PCM data.
+        return [AudioFormats.WAV] 
 
     @property
     def supported_codecs(self) -> list[AudioCodecs]:
         """Return a list of supported codecs."""
+        # PCM is the codec used within the WAV container.
         return [AudioCodecs.PCM]
 
     @property
     def supported_bit_rates(self) -> list[AudioBitRates]:
         """Return a list of supported bitrates."""
-        return [AudioBitRates.BITRATE_16KHZ_16BIT_MONO]
+        # Corresponds to the bits setting in Volcengine API (e.g., 16 for 16-bit)
+        # HA uses these enums for metadata checking.
+        return [AudioBitRates.BITRATE_16]
 
     @property
     def supported_sample_rates(self) -> list[AudioSampleRates]:
         """Return a list of supported samplerates."""
-        return [AudioSampleRates.SR_16KHZ]
+        # Corresponds to the rate setting in Volcengine API (e.g., 16000 for 16kHz)
+        return [AudioSampleRates.SAMPLERATE_16000]
 
     @property
     def supported_channels(self) -> list[AudioChannels]:
         """Return a list of supported channels."""
-        return [AudioChannels.MONO]
+        # Corresponds to the channel setting in Volcengine API (e.g., 1 for mono)
+        return [AudioChannels.CHANNEL_MONO]
     
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: asyncio.StreamReader
@@ -125,6 +126,18 @@ class VolcengineASRProvider(SpeechToTextEntity):
         """Process an audio stream to STT service."""
         _LOGGER.debug(f"Processing audio stream with metadata: {metadata}")
         
+        # Validate incoming audio metadata against what this provider supports
+        if not self.check_metadata(metadata):
+            _LOGGER.error(
+                f"Unsupported audio metadata: format={metadata.format}, "
+                f"codec={metadata.codec}, rate={metadata.sample_rate}, "
+                f"bits={metadata.bit_rate}, channels={metadata.channel}. "
+                f"Supported: formats={self.supported_formats}, codecs={self.supported_codecs}, "
+                f"rates={self.supported_sample_rates}, bits={self.supported_bit_rates}, "
+                f"channels={self.supported_channels}"
+            )
+            return SpeechResult(None, SpeechResultState.ERROR)
+
         app_id = self._config[CONF_APP_ID]
         access_token = self._config[CONF_ACCESS_TOKEN]
         resource_id = self._config[CONF_RESOURCE_ID]
@@ -138,16 +151,15 @@ class VolcengineASRProvider(SpeechToTextEntity):
             "X-Api-Connect-Id": self._connect_id,
         }
 
-        audio_params = {
-            "format": self._config.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT),
-            "rate": self._config.get(CONF_AUDIO_RATE, DEFAULT_AUDIO_RATE),
-            "bits": self._config.get(CONF_AUDIO_BITS, DEFAULT_AUDIO_BITS),
-            "channel": self._config.get(CONF_AUDIO_CHANNEL, DEFAULT_AUDIO_CHANNEL),
-            "codec": "raw", 
+        # Parameters for Volcengine API, derived from component config
+        # HA will ensure the stream matches the `supported_*` properties via `check_metadata`
+        volc_audio_params = {
+            "format": self._config.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT), # e.g., "raw" or "pcm"
+            "rate": self._config.get(CONF_AUDIO_RATE, DEFAULT_AUDIO_RATE),       # e.g., 16000
+            "bits": self._config.get(CONF_AUDIO_BITS, DEFAULT_AUDIO_BITS),       # e.g., 16
+            "channel": self._config.get(CONF_AUDIO_CHANNEL, DEFAULT_AUDIO_CHANNEL), # e.g., 1
+            "codec": "raw", # Volcengine expects "raw" for uncompressed PCM
         }
-        if metadata.format != AudioFormats.PCM or metadata.codec != AudioCodecs.PCM:
-            _LOGGER.error(f"Unsupported audio format/codec: {metadata.format}/{metadata.codec}")
-            return SpeechResult(None, SpeechResultState.ERROR)
         
         request_params = {
             "model_name": "bigmodel",
@@ -160,7 +172,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
 
         full_client_request_payload = {
             "user": {"uid": "homeassistant_user"}, 
-            "audio": audio_params,
+            "audio": volc_audio_params,
             "request": request_params,
         }
 
@@ -174,7 +186,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 await websocket.send(msg_header + payload_size + payload_json)
                 _LOGGER.debug(f"Sent Full Client Request: {full_client_request_payload}")
 
-                chunk_size = audio_params["rate"] * audio_params["bits"] // 8 * audio_params["channel"] * 200 // 1000
+                chunk_size = volc_audio_params["rate"] * volc_audio_params["bits"] // 8 * volc_audio_params["channel"] * 200 // 1000
                 is_final_chunk = False
                 final_text_parts = []
 
