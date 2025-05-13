@@ -198,29 +198,31 @@ class VolcengineASRProvider(SpeechToTextEntity):
                         ws_msg = await asyncio.wait_for(websocket.receive(), timeout=0.1)
                         if ws_msg.type == aiohttp.WSMsgType.BINARY:
                             response_data = ws_msg.data
-                            if not response_data or len(response_data) < 8: # Check for empty or too short payload
+                            if not response_data or len(response_data) < 8:
                                 _LOGGER.debug("Received empty or incomplete binary message from ASR, skipping.")
                                 continue
                             resp_header_data = response_data[:4]
                             resp_payload_data = response_data[8:]
                             resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
                             if resp_msg_type == 0b1001:
-                                if not resp_payload_data: # Check if payload part is empty
+                                if not resp_payload_data:
                                     _LOGGER.debug("Received ASR message with empty payload, skipping JSON parse.")
                                     continue
                                 try:
-                                    resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
+                                    decoded_payload = resp_payload_data.decode("utf-8")
+                                    resp_payload_json = json.loads(decoded_payload)
                                     _LOGGER.debug(f"Received ASR response: {resp_payload_json}")
                                     if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
                                         for res_item in resp_payload_json.get("result", []):
                                             final_text_parts.append(res_item.get("text", ""))
                                         if resp_payload_json.get("type") == "final":
                                             server_marked_final = True
+                                except UnicodeDecodeError as ude_err:
+                                    _LOGGER.warning(f"UnicodeDecodeError during ASR response decoding (audio send): {ude_err}. Payload (hex): {resp_payload_data.hex()}")
                                 except json.JSONDecodeError as json_err:
-                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (audio send): {json_err}. Payload: {resp_payload_data.decode('utf-8', errors='ignore')}")
-                                    # Optionally, decide if this is a critical error or can be ignored
+                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (audio send): {json_err}. Payload: {resp_payload_data.decode("utf-8", errors="ignore")}")
                             elif resp_msg_type == 0b1111:
-                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode('utf-8', errors='ignore')}")
+                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode("utf-8", errors="ignore")}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
                         elif ws_msg.type == aiohttp.WSMsgType.ERROR:
                             _LOGGER.error(f"aiohttp WebSocket connection error during receive: {websocket.exception()}")
@@ -257,7 +259,8 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                     _LOGGER.debug("Received ASR message with empty payload (final wait), skipping JSON parse.")
                                     continue
                                 try:
-                                    resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
+                                    decoded_payload = resp_payload_data.decode("utf-8")
+                                    resp_payload_json = json.loads(decoded_payload)
                                     _LOGGER.debug(f"Received ASR response (final wait): {resp_payload_json}")
                                     if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
                                         for res_item in resp_payload_json.get("result", []):
@@ -268,10 +271,12 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                     elif resp_payload_json.get("header", {}).get("status") != 20000000:
                                         _LOGGER.error(f"Volcengine ASR Error in payload (final wait): {resp_payload_json}")
                                         return SpeechResult(None, SpeechResultState.ERROR)
+                                except UnicodeDecodeError as ude_err:
+                                    _LOGGER.warning(f"UnicodeDecodeError during ASR response decoding (final wait): {ude_err}. Payload (hex): {resp_payload_data.hex()}")
                                 except json.JSONDecodeError as json_err:
-                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (final wait): {json_err}. Payload: {resp_payload_data.decode('utf-8', errors='ignore')}")
+                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (final wait): {json_err}. Payload: {resp_payload_data.decode("utf-8", errors="ignore")}")
                             elif resp_msg_type == 0b1111:
-                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message (final wait): {resp_payload_data.decode('utf-8', errors='ignore')}")
+                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message (final wait): {resp_payload_data.decode("utf-8", errors="ignore")}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
                         elif ws_msg.type == aiohttp.WSMsgType.ERROR:
                             _LOGGER.error(f"aiohttp WebSocket connection error (final wait): {websocket.exception()}")
