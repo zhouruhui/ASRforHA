@@ -170,7 +170,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
 
         session = async_get_clientsession(self.hass)
         final_text_parts = []
-        server_marked_final = False # Flag to see if server sent a "final" type message
+        server_marked_final = False 
 
         try:
             async with session.ws_connect(service_url, headers=custom_headers) as websocket:
@@ -182,12 +182,11 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 await websocket.send_bytes(msg_header + payload_size + payload_json)
                 _LOGGER.debug(f"Sent Full Client Request: {full_client_request_payload}")
 
-                # Process audio stream using async for as stream is an async_generator
                 async for audio_chunk in stream:
-                    if not audio_chunk: # Should not happen with async for, but good practice
+                    if not audio_chunk: 
                         continue
                     
-                    flags = 0b0000 # Not the final chunk from this loop
+                    flags = 0b0000 
                     msg_type_flags = (0b0010 << 4) | flags
                     audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
                     audio_payload_size = struct.pack(">I", len(audio_chunk))
@@ -195,24 +194,31 @@ class VolcengineASRProvider(SpeechToTextEntity):
                     await websocket.send_bytes(audio_header + audio_payload_size + audio_chunk)
                     _LOGGER.debug(f"Sent audio chunk, size: {len(audio_chunk)}")
 
-                    # Attempt to receive response after sending each chunk (non-blocking or with timeout)
                     try:
-                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=0.1) # Short timeout
+                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=0.1)
                         if ws_msg.type == aiohttp.WSMsgType.BINARY:
                             response_data = ws_msg.data
+                            if not response_data or len(response_data) < 8: # Check for empty or too short payload
+                                _LOGGER.debug("Received empty or incomplete binary message from ASR, skipping.")
+                                continue
                             resp_header_data = response_data[:4]
                             resp_payload_data = response_data[8:]
                             resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
                             if resp_msg_type == 0b1001:
-                                resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
-                                _LOGGER.debug(f"Received ASR response: {resp_payload_json}")
-                                if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
-                                    for res_item in resp_payload_json.get("result", []):
-                                        final_text_parts.append(res_item.get("text", ""))
-                                    if resp_payload_json.get("type") == "final":
-                                        server_marked_final = True
-                                        # If server marks final, we might not need to send more audio or the final empty chunk
-                                        # However, the ASR protocol might still expect the audio stream to formally end.
+                                if not resp_payload_data: # Check if payload part is empty
+                                    _LOGGER.debug("Received ASR message with empty payload, skipping JSON parse.")
+                                    continue
+                                try:
+                                    resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
+                                    _LOGGER.debug(f"Received ASR response: {resp_payload_json}")
+                                    if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
+                                        for res_item in resp_payload_json.get("result", []):
+                                            final_text_parts.append(res_item.get("text", ""))
+                                        if resp_payload_json.get("type") == "final":
+                                            server_marked_final = True
+                                except json.JSONDecodeError as json_err:
+                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (audio send): {json_err}. Payload: {resp_payload_data.decode('utf-8', errors='ignore')}")
+                                    # Optionally, decide if this is a critical error or can be ignored
                             elif resp_msg_type == 0b1111:
                                 _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode('utf-8', errors='ignore')}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
@@ -221,47 +227,49 @@ class VolcengineASRProvider(SpeechToTextEntity):
                             return SpeechResult(None, SpeechResultState.ERROR)
                         elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
                             _LOGGER.info("aiohttp WebSocket connection closed by server during audio send.")
-                            # This might be an error if we haven't finished sending all audio
                             return SpeechResult(" ".join(filter(None, final_text_parts)) or None, SpeechResultState.ERROR if not server_marked_final else SpeechResultState.SUCCESS)
-
                     except asyncio.TimeoutError:
                         _LOGGER.debug("No immediate response from ASR, continuing to send audio.")
                     except Exception as e:
                         _LOGGER.error(f"Error processing ASR response during audio send: {e}", exc_info=True)
-                        # Continue sending audio, but log this error
                 
-                # After iterating through all audio_chunks from the stream, send a final empty chunk
                 _LOGGER.debug("Finished sending all audio chunks from stream. Sending final empty chunk.")
-                flags = 0b0010 # Mark as final chunk
+                flags = 0b0010 
                 msg_type_flags = (0b0010 << 4) | flags
                 final_audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
-                final_audio_payload_size = struct.pack(">I", 0) # Empty payload
+                final_audio_payload_size = struct.pack(">I", 0) 
                 await websocket.send_bytes(final_audio_header + final_audio_payload_size)
                 _LOGGER.debug("Sent final empty audio chunk.")
 
-                # Now, wait for the final ASR responses
-                # Loop to receive messages until a final response or timeout/error
                 while not server_marked_final:
                     try:
-                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=10.0) # Longer timeout for final result
+                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=10.0)
                         if ws_msg.type == aiohttp.WSMsgType.BINARY:
                             response_data = ws_msg.data
+                            if not response_data or len(response_data) < 8:
+                                _LOGGER.debug("Received empty or incomplete binary message from ASR (final wait), skipping.")
+                                continue
                             resp_header_data = response_data[:4]
                             resp_payload_data = response_data[8:]
                             resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
-
                             if resp_msg_type == 0b1001:
-                                resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
-                                _LOGGER.debug(f"Received ASR response (final wait): {resp_payload_json}")
-                                if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
-                                    for res_item in resp_payload_json.get("result", []):
-                                        final_text_parts.append(res_item.get("text", ""))
-                                    if resp_payload_json.get("type") == "final":
-                                        server_marked_final = True
-                                        break # Got the final message
-                                elif resp_payload_json.get("header", {}).get("status") != 20000000:
-                                    _LOGGER.error(f"Volcengine ASR Error in payload (final wait): {resp_payload_json}")
-                                    return SpeechResult(None, SpeechResultState.ERROR)
+                                if not resp_payload_data:
+                                    _LOGGER.debug("Received ASR message with empty payload (final wait), skipping JSON parse.")
+                                    continue
+                                try:
+                                    resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
+                                    _LOGGER.debug(f"Received ASR response (final wait): {resp_payload_json}")
+                                    if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
+                                        for res_item in resp_payload_json.get("result", []):
+                                            final_text_parts.append(res_item.get("text", ""))
+                                        if resp_payload_json.get("type") == "final":
+                                            server_marked_final = True
+                                            break 
+                                    elif resp_payload_json.get("header", {}).get("status") != 20000000:
+                                        _LOGGER.error(f"Volcengine ASR Error in payload (final wait): {resp_payload_json}")
+                                        return SpeechResult(None, SpeechResultState.ERROR)
+                                except json.JSONDecodeError as json_err:
+                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (final wait): {json_err}. Payload: {resp_payload_data.decode('utf-8', errors='ignore')}")
                             elif resp_msg_type == 0b1111:
                                 _LOGGER.error(f"Volcengine ASR WebSocket Error Message (final wait): {resp_payload_data.decode('utf-8', errors='ignore')}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
@@ -270,21 +278,21 @@ class VolcengineASRProvider(SpeechToTextEntity):
                             return SpeechResult(None, SpeechResultState.ERROR)
                         elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
                             _LOGGER.info("aiohttp WebSocket connection closed by server (final wait).")
-                            break # Connection closed, process what we have
+                            break 
                     except asyncio.TimeoutError:
                         _LOGGER.error("Timeout waiting for final ASR response after sending all audio.")
-                        break # Timeout, process what we have
+                        break 
                     except Exception as e:
                         _LOGGER.error(f"Error processing final ASR response: {e}", exc_info=True)
                         return SpeechResult(None, SpeechResultState.ERROR)
                 
                 final_text = " ".join(filter(None, final_text_parts))
                 _LOGGER.info(f"Final recognized text: {final_text}")
-                if final_text or server_marked_final: # If server said final, or we got text
+                if final_text or server_marked_final: 
                     return SpeechResult(final_text if final_text else None, SpeechResultState.SUCCESS)
                 else:
                     _LOGGER.warning("ASR result is empty and not marked as final by server.")
-                    return SpeechResult(None, SpeechResultState.ERROR) # Or SUCCESS if empty is acceptable
+                    return SpeechResult(None, SpeechResultState.ERROR) 
         
         except aiohttp.ClientError as e:
             _LOGGER.error(f"aiohttp client connection error: {e}", exc_info=True)
