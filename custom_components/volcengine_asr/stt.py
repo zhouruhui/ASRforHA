@@ -3,8 +3,11 @@ import asyncio
 import logging
 import json
 import uuid
-import websockets
 import struct
+import aiohttp # Import aiohttp
+
+# Remove direct websockets import if fully replaced by aiohttp for connect
+# import websockets 
 
 from homeassistant.components.stt import (
     AudioBitRates,
@@ -22,6 +25,7 @@ from homeassistant.components.stt.models import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+from homeassistant.helpers.aiohttp_client import async_get_clientsession # For getting HA's client session
 
 from .const import (
     DOMAIN,
@@ -92,32 +96,26 @@ class VolcengineASRProvider(SpeechToTextEntity):
     @property
     def supported_formats(self) -> list[AudioFormats]:
         """Return a list of supported formats."""
-        # Volcengine ASR expects raw PCM. HA typically sends WAV container for PCM data.
-        return [AudioFormats.WAV] 
+        return [AudioFormats.WAV]
 
     @property
     def supported_codecs(self) -> list[AudioCodecs]:
         """Return a list of supported codecs."""
-        # PCM is the codec used within the WAV container.
         return [AudioCodecs.PCM]
 
     @property
     def supported_bit_rates(self) -> list[AudioBitRates]:
         """Return a list of supported bitrates."""
-        # Corresponds to the bits setting in Volcengine API (e.g., 16 for 16-bit)
-        # HA uses these enums for metadata checking.
         return [AudioBitRates.BITRATE_16]
 
     @property
     def supported_sample_rates(self) -> list[AudioSampleRates]:
         """Return a list of supported samplerates."""
-        # Corresponds to the rate setting in Volcengine API (e.g., 16000 for 16kHz)
         return [AudioSampleRates.SAMPLERATE_16000]
 
     @property
     def supported_channels(self) -> list[AudioChannels]:
         """Return a list of supported channels."""
-        # Corresponds to the channel setting in Volcengine API (e.g., 1 for mono)
         return [AudioChannels.CHANNEL_MONO]
     
     async def async_process_audio_stream(
@@ -126,7 +124,6 @@ class VolcengineASRProvider(SpeechToTextEntity):
         """Process an audio stream to STT service."""
         _LOGGER.debug(f"Processing audio stream with metadata: {metadata}")
         
-        # Validate incoming audio metadata against what this provider supports
         if not self.check_metadata(metadata):
             _LOGGER.error(
                 f"Unsupported audio metadata: format={metadata.format}, "
@@ -144,21 +141,19 @@ class VolcengineASRProvider(SpeechToTextEntity):
         service_url = self._config.get(CONF_SERVICE_URL, DEFAULT_SERVICE_URL)
         self._connect_id = str(uuid.uuid4()) 
 
-        headers = {
+        custom_headers = {
             "X-Api-App-Key": app_id,
             "X-Api-Access-Key": access_token,
             "X-Api-Resource-Id": resource_id,
             "X-Api-Connect-Id": self._connect_id,
         }
 
-        # Parameters for Volcengine API, derived from component config
-        # HA will ensure the stream matches the `supported_*` properties via `check_metadata`
         volc_audio_params = {
-            "format": self._config.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT), # e.g., "raw" or "pcm"
-            "rate": self._config.get(CONF_AUDIO_RATE, DEFAULT_AUDIO_RATE),       # e.g., 16000
-            "bits": self._config.get(CONF_AUDIO_BITS, DEFAULT_AUDIO_BITS),       # e.g., 16
-            "channel": self._config.get(CONF_AUDIO_CHANNEL, DEFAULT_AUDIO_CHANNEL), # e.g., 1
-            "codec": "raw", # Volcengine expects "raw" for uncompressed PCM
+            "format": self._config.get(CONF_AUDIO_FORMAT, DEFAULT_AUDIO_FORMAT),
+            "rate": self._config.get(CONF_AUDIO_RATE, DEFAULT_AUDIO_RATE),
+            "bits": self._config.get(CONF_AUDIO_BITS, DEFAULT_AUDIO_BITS),
+            "channel": self._config.get(CONF_AUDIO_CHANNEL, DEFAULT_AUDIO_CHANNEL),
+            "codec": "raw",
         }
         
         request_params = {
@@ -176,14 +171,16 @@ class VolcengineASRProvider(SpeechToTextEntity):
             "request": request_params,
         }
 
+        session = async_get_clientsession(self.hass)
+
         try:
-            async with websockets.connect(service_url, extra_headers=headers) as websocket:
-                _LOGGER.info(f"Connected to Volcengine ASR: {service_url} with connect_id: {self._connect_id}")
+            async with session.ws_connect(service_url, headers=custom_headers) as websocket:
+                _LOGGER.info(f"Connected to Volcengine ASR via aiohttp: {service_url} with connect_id: {self._connect_id}")
                 
                 payload_json = json.dumps(full_client_request_payload).encode("utf-8")
                 msg_header = struct.pack(">BBBB", 0x11, 0x10, 0x10, 0x00)
                 payload_size = struct.pack(">I", len(payload_json))
-                await websocket.send(msg_header + payload_size + payload_json)
+                await websocket.send_bytes(msg_header + payload_size + payload_json) # Use send_bytes for aiohttp
                 _LOGGER.debug(f"Sent Full Client Request: {full_client_request_payload}")
 
                 chunk_size = volc_audio_params["rate"] * volc_audio_params["bits"] // 8 * volc_audio_params["channel"] * 200 // 1000
@@ -200,60 +197,71 @@ class VolcengineASRProvider(SpeechToTextEntity):
                     audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
                     audio_payload_size = struct.pack(">I", len(audio_chunk))
                     
-                    await websocket.send(audio_header + audio_payload_size + audio_chunk)
+                    await websocket.send_bytes(audio_header + audio_payload_size + audio_chunk) # Use send_bytes
                     _LOGGER.debug(f"Sent audio chunk, size: {len(audio_chunk)}, final: {is_final_chunk}")
 
                     try:
-                        response_data = await asyncio.wait_for(websocket.recv(), timeout=10.0) 
-                        resp_header_data = response_data[:4]
-                        resp_payload_data = response_data[8:]
-                        resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
+                        # For aiohttp, receive using websocket.receive()
+                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=10.0)
+                        
+                        if ws_msg.type == aiohttp.WSMsgType.BINARY:
+                            response_data = ws_msg.data
+                            resp_header_data = response_data[:4]
+                            resp_payload_data = response_data[8:]
+                            resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
 
-                        if resp_msg_type == 0b1001: 
-                            resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
-                            _LOGGER.debug(f"Received ASR response: {resp_payload_json}")
-                            if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
-                                for res_item in resp_payload_json.get("result", []):
-                                    final_text_parts.append(res_item.get("text", ""))
-                                if resp_payload_json.get("type") == "final":
-                                    is_final_chunk = True 
-                                    break 
-                            elif resp_payload_json.get("header", {}).get("status") != 20000000:
-                                _LOGGER.error(f"Volcengine ASR Error in payload: {resp_payload_json}")
+                            if resp_msg_type == 0b1001: 
+                                resp_payload_json = json.loads(resp_payload_data.decode("utf-8"))
+                                _LOGGER.debug(f"Received ASR response: {resp_payload_json}")
+                                if resp_payload_json.get("type") == "final" or resp_payload_json.get("type") == "utterance_end":
+                                    for res_item in resp_payload_json.get("result", []):
+                                        final_text_parts.append(res_item.get("text", ""))
+                                    if resp_payload_json.get("type") == "final":
+                                        is_final_chunk = True 
+                                        break 
+                                elif resp_payload_json.get("header", {}).get("status") != 20000000:
+                                    _LOGGER.error(f"Volcengine ASR Error in payload: {resp_payload_json}")
+                                    return SpeechResult(None, SpeechResultState.ERROR)
+                            elif resp_msg_type == 0b1111: 
+                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode("utf-8", errors="ignore")}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
-                        elif resp_msg_type == 0b1111: 
-                            _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode("utf-8", errors="ignore")}")
+                            else:
+                                _LOGGER.warning(f"Received unexpected binary message type: {resp_msg_type}")
+                        elif ws_msg.type == aiohttp.WSMsgType.TEXT:
+                             _LOGGER.warning(f"Received unexpected TEXT message from ASR: {ws_msg.data}")
+                        elif ws_msg.type == aiohttp.WSMsgType.ERROR:
+                            _LOGGER.error(f"aiohttp WebSocket connection error: {websocket.exception()}")
                             return SpeechResult(None, SpeechResultState.ERROR)
-                        else:
-                            _LOGGER.warning(f"Received unexpected message type: {resp_msg_type}")
+                        elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
+                            _LOGGER.info("aiohttp WebSocket connection closed by server.")
+                            # Decide if this is an error or normal termination based on context
+                            if not final_text_parts and not is_final_chunk:
+                                 return SpeechResult(None, SpeechResultState.ERROR)
+                            break # Exit receive loop if connection closed
 
                     except asyncio.TimeoutError:
                         _LOGGER.warning("Timeout waiting for ASR response. Continuing to send audio if not final.")
                         if is_final_chunk:
                             _LOGGER.error("Timeout waiting for final ASR response after sending last audio chunk.")
                             return SpeechResult(None, SpeechResultState.ERROR)
-                    except websockets.exceptions.ConnectionClosed:
-                        _LOGGER.error("WebSocket connection closed unexpectedly by server.")
-                        return SpeechResult(None, SpeechResultState.ERROR)
+                    # Removed websockets.exceptions.ConnectionClosed, aiohttp handles this via WSMsgType.CLOSED/ERROR
                     except Exception as e:
-                        _LOGGER.error(f"Error processing ASR response: {e}")
+                        _LOGGER.error(f"Error processing ASR response with aiohttp: {e}", exc_info=True)
                         return SpeechResult(None, SpeechResultState.ERROR)
                 
                 final_text = " ".join(filter(None, final_text_parts))
                 _LOGGER.info(f"Final recognized text: {final_text}")
-                if final_text:
-                    return SpeechResult(final_text, SpeechResultState.SUCCESS)
+                if final_text or is_final_chunk: # Consider it success if we reached the end, even if text is empty
+                    return SpeechResult(final_text if final_text else None, SpeechResultState.SUCCESS)
                 else:
-                    _LOGGER.warning("ASR result is empty.")
-                    return SpeechResult(None, SpeechResultState.SUCCESS) 
-
-        except websockets.exceptions.InvalidURI:
-            _LOGGER.error(f"Invalid WebSocket URI: {service_url}")
+                    _LOGGER.warning("ASR result is empty and not marked as final.")
+                    return SpeechResult(None, SpeechResultState.ERROR)
+        
+        except aiohttp.ClientError as e: # Catch aiohttp specific client errors
+            _LOGGER.error(f"aiohttp client connection error: {e}", exc_info=True)
             return SpeechResult(None, SpeechResultState.ERROR)
-        except websockets.exceptions.WebSocketException as e:
-            _LOGGER.error(f"WebSocket connection error: {e}")
-            return SpeechResult(None, SpeechResultState.ERROR)
+        # Removed websockets.exceptions.InvalidURI and websockets.exceptions.WebSocketException
         except Exception as e:
-            _LOGGER.error(f"An unexpected error occurred in Volcengine ASR: {e}", exc_info=True)
+            _LOGGER.error(f"An unexpected error occurred in Volcengine ASR (aiohttp): {e}", exc_info=True)
             return SpeechResult(None, SpeechResultState.ERROR)
 
