@@ -115,6 +115,23 @@ class VolcengineASRProvider(SpeechToTextEntity):
         """Return a list of supported channels."""
         return [AudioChannels.CHANNEL_MONO]
     
+    def _preprocess_payload(self, payload_bytes: bytes) -> bytes:
+        """Preprocesses the payload to remove any non-JSON prefix."""
+        try:
+            # Find the first occurrence of '{' which usually marks the start of a JSON object
+            json_start_index = payload_bytes.find(b'{')
+            if json_start_index == -1:
+                # If '{' is not found, it's unlikely to be a valid JSON we can process
+                _LOGGER.warning(f"ASR response payload does not contain JSON start character '{{'. Payload (hex): {payload_bytes.hex()}")
+                return b'' # Return empty bytes, will be caught by subsequent checks
+            
+            if json_start_index > 0:
+                _LOGGER.debug(f"ASR response payload has prefix. Original (hex): {payload_bytes.hex()}, Stripped (hex): {payload_bytes[json_start_index:].hex()}")
+            return payload_bytes[json_start_index:]
+        except Exception as e:
+            _LOGGER.error(f"Error during payload preprocessing: {e}. Original payload (hex): {payload_bytes.hex()}")
+            return payload_bytes # Return original on error to see further logs
+
     async def async_process_audio_stream(
         self, metadata: SpeechMetadata, stream: asyncio.StreamReader # stream is actually an async_generator
     ) -> SpeechResult:
@@ -202,11 +219,13 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                 _LOGGER.debug("Received empty or incomplete binary message from ASR, skipping.")
                                 continue
                             resp_header_data = response_data[:4]
-                            resp_payload_data = response_data[8:]
+                            raw_payload_data = response_data[8:] # Keep original for logging if needed
+                            resp_payload_data = self._preprocess_payload(raw_payload_data)
+
                             resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
                             if resp_msg_type == 0b1001:
                                 if not resp_payload_data:
-                                    _LOGGER.debug("Received ASR message with empty payload, skipping JSON parse.")
+                                    _LOGGER.debug("Received ASR message with empty payload after preprocessing, skipping JSON parse.")
                                     continue
                                 try:
                                     decoded_payload = resp_payload_data.decode("utf-8")
@@ -220,7 +239,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                 except UnicodeDecodeError as ude_err:
                                     _LOGGER.warning(f"UnicodeDecodeError during ASR response decoding (audio send): {ude_err}. Payload (hex): {resp_payload_data.hex()}")
                                 except json.JSONDecodeError as json_err:
-                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (audio send): {json_err}. Payload: {resp_payload_data.decode("utf-8", errors="ignore")}")
+                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (audio send): {json_err}. Original Payload (hex): {raw_payload_data.hex()}, Processed Payload: {resp_payload_data.decode('utf-8', errors='ignore')}")
                             elif resp_msg_type == 0b1111:
                                 _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {resp_payload_data.decode("utf-8", errors="ignore")}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
@@ -252,11 +271,13 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                 _LOGGER.debug("Received empty or incomplete binary message from ASR (final wait), skipping.")
                                 continue
                             resp_header_data = response_data[:4]
-                            resp_payload_data = response_data[8:]
+                            raw_payload_data = response_data[8:]
+                            resp_payload_data = self._preprocess_payload(raw_payload_data)
+                            
                             resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
                             if resp_msg_type == 0b1001:
                                 if not resp_payload_data:
-                                    _LOGGER.debug("Received ASR message with empty payload (final wait), skipping JSON parse.")
+                                    _LOGGER.debug("Received ASR message with empty payload after preprocessing (final wait), skipping JSON parse.")
                                     continue
                                 try:
                                     decoded_payload = resp_payload_data.decode("utf-8")
@@ -274,7 +295,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                 except UnicodeDecodeError as ude_err:
                                     _LOGGER.warning(f"UnicodeDecodeError during ASR response decoding (final wait): {ude_err}. Payload (hex): {resp_payload_data.hex()}")
                                 except json.JSONDecodeError as json_err:
-                                    _LOGGER.warning(f"JSONDecodeError during ASR response processing (final wait): {json_err}. Payload: {resp_payload_data.decode("utf-8", errors="ignore")}")
+                                     _LOGGER.warning(f"JSONDecodeError during ASR response processing (final wait): {json_err}. Original Payload (hex): {raw_payload_data.hex()}, Processed Payload: {resp_payload_data.decode('utf-8', errors='ignore')}")
                             elif resp_msg_type == 0b1111:
                                 _LOGGER.error(f"Volcengine ASR WebSocket Error Message (final wait): {resp_payload_data.decode("utf-8", errors="ignore")}")
                                 return SpeechResult(None, SpeechResultState.ERROR)
