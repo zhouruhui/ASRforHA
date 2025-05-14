@@ -178,12 +178,64 @@ class VolcengineASRProvider(SpeechToTextEntity):
         }
 
         session = async_get_clientsession(self.hass)
+        # 使用集合和有序字典跟踪文本片段
         final_text_set = set()
+        # 存储长文本以便进行字符级重复检查
+        full_text_history = ""
         server_marked_final = False
         error_occurred = False
         error_payload_for_logging = None
+        # 使用字典跟踪每个片段的ID，避免重复
         result_segments = {}
         current_segment_index = 0
+        
+        # 辅助函数用于检查文本是否是已有文本的子串或包含已有文本
+        def is_redundant_text(new_text, existing_text):
+            if not new_text or not existing_text:
+                return False
+            # 如果新文本是现有文本的子串，或者现有文本是新文本的子串，认为是冗余
+            return new_text in existing_text or existing_text in new_text
+        
+        # 辅助函数用于处理接收到的结果文本
+        def process_result_text(text, is_final=False):
+            nonlocal full_text_history, current_segment_index
+            
+            if not text or not text.strip():
+                return False
+                
+            text = text.strip()
+            
+            # 跳过过短的文本（可能只是噪音）
+            if len(text) < 2:
+                return False
+                
+            # 检查是否与历史文本存在冗余
+            if text in final_text_set:
+                return False
+                
+            # 检查是否是历史完整文本的子串
+            if is_redundant_text(text, full_text_history):
+                _LOGGER.debug(f"Skipping redundant text: '{text}'")
+                return False
+            
+            # 检查是否与之前识别的各段文本有冗余
+            for segment in result_segments.values():
+                if is_redundant_text(text, segment):
+                    _LOGGER.debug(f"Skipping text '{text}' redundant with existing segment '{segment}'")
+                    return False
+            
+            # 如果是最终结果或内容足够长，加入到段落中
+            final_text_set.add(text)
+            result_segments[current_segment_index] = text
+            current_segment_index += 1
+            
+            # 将文本添加到历史中，用于后续子串检查
+            if full_text_history:
+                full_text_history += " " + text
+            else:
+                full_text_history = text
+                
+            return True
 
         try:
             async with session.ws_connect(service_url, headers=custom_headers) as websocket:
@@ -239,25 +291,13 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                     if isinstance(result_data, list):
                                         for res_item in result_data:
                                             if isinstance(res_item, dict):
-                                                text = res_item.get("text", "").strip()
-                                                if text and text not in final_text_set:
-                                                    final_text_set.add(text)
-                                                    result_segments[current_segment_index] = text
-                                                    current_segment_index += 1
-                                            elif isinstance(res_item, str) and res_item.strip() and res_item.strip() not in final_text_set:
-                                                final_text_set.add(res_item.strip())
-                                                result_segments[current_segment_index] = res_item.strip()
-                                                current_segment_index += 1
+                                                process_result_text(res_item.get("text", ""))
+                                            elif isinstance(res_item, str):
+                                                process_result_text(res_item)
                                     elif isinstance(result_data, dict):
-                                        text = result_data.get("text", "").strip()
-                                        if text and text not in final_text_set:
-                                            final_text_set.add(text)
-                                            result_segments[current_segment_index] = text
-                                            current_segment_index += 1
-                                    elif isinstance(result_data, str) and result_data.strip() and result_data.strip() not in final_text_set:
-                                        final_text_set.add(result_data.strip())
-                                        result_segments[current_segment_index] = result_data.strip()
-                                        current_segment_index += 1
+                                        process_result_text(result_data.get("text", ""))
+                                    elif isinstance(result_data, str):
+                                        process_result_text(result_data)
                                     
                                     if msg_type == "final":
                                         server_marked_final = True
@@ -338,25 +378,13 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                     if isinstance(result_data, list):
                                         for res_item in result_data:
                                             if isinstance(res_item, dict):
-                                                text = res_item.get("text", "").strip()
-                                                if text and text not in final_text_set:
-                                                    final_text_set.add(text)
-                                                    result_segments[current_segment_index] = text
-                                                    current_segment_index += 1
-                                            elif isinstance(res_item, str) and res_item.strip() and res_item.strip() not in final_text_set:
-                                                final_text_set.add(res_item.strip())
-                                                result_segments[current_segment_index] = res_item.strip()
-                                                current_segment_index += 1
+                                                process_result_text(res_item.get("text", ""), msg_type == "final")
+                                            elif isinstance(res_item, str):
+                                                process_result_text(res_item, msg_type == "final")
                                     elif isinstance(result_data, dict):
-                                        text = result_data.get("text", "").strip()
-                                        if text and text not in final_text_set:
-                                            final_text_set.add(text)
-                                            result_segments[current_segment_index] = text
-                                            current_segment_index += 1
-                                    elif isinstance(result_data, str) and result_data.strip() and result_data.strip() not in final_text_set:
-                                        final_text_set.add(result_data.strip())
-                                        result_segments[current_segment_index] = result_data.strip()
-                                        current_segment_index += 1
+                                        process_result_text(result_data.get("text", ""), msg_type == "final")
+                                    elif isinstance(result_data, str):
+                                        process_result_text(result_data, msg_type == "final")
 
                                     if msg_type == "final":
                                         server_marked_final = True
@@ -397,11 +425,46 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 final_text = ""
                 if result_segments:
                     try:
-                        final_text_ordered = " ".join([result_segments[i] for i in sorted(result_segments.keys())])
-                        final_text = final_text_ordered.strip()
+                        # 合并前检查是否需要进一步去重（防止因并发响应导致的部分重复）
+                        merged_segments = {}
+                        processed_indices = set()
+                        
+                        # 按索引排序确保顺序正确
+                        sorted_indices = sorted(result_segments.keys())
+                        
+                        for i in sorted_indices:
+                            if i in processed_indices:
+                                continue
+                                
+                            current_text = result_segments[i]
+                            merged = False
+                            
+                            # 检查该文本是否可以与其他文本合并（避免子句重复）
+                            for j in [x for x in sorted_indices if x != i and x not in processed_indices]:
+                                other_text = result_segments[j]
+                                
+                                # 如果一个文本包含另一个，只保留较长的版本
+                                if is_redundant_text(current_text, other_text):
+                                    if len(other_text) > len(current_text):
+                                        # 其他文本更长，丢弃当前文本
+                                        processed_indices.add(i)
+                                        merged = True
+                                        break
+                                    else:
+                                        # 当前文本更长或相等，丢弃其他文本
+                                        processed_indices.add(j)
+                            
+                            if not merged:
+                                # 只添加未被合并的文本段
+                                merged_segments[i] = current_text
+                        
+                        # 构建最终文本
+                        final_text_segments = [merged_segments[i] for i in sorted(merged_segments.keys())]
+                        final_text = " ".join(final_text_segments).strip()
+                        
                     except Exception as e:
                         _LOGGER.error(f"Error constructing final text: {e}", exc_info=True)
-                        # 回退方案：直接使用集合内容（可能顺序不正确，但总比没有结果好）
+                        # 回退方案：直接使用集合内容
                         final_text = " ".join(final_text_set).strip()
                 
                 _LOGGER.info(f"Final recognized text: \"{final_text}\"")
