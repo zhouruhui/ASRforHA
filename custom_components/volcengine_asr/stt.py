@@ -178,10 +178,12 @@ class VolcengineASRProvider(SpeechToTextEntity):
         }
 
         session = async_get_clientsession(self.hass)
-        final_text_parts = []
+        final_text_set = set()
         server_marked_final = False
         error_occurred = False
         error_payload_for_logging = None
+        result_segments = {}
+        current_segment_index = 0
 
         try:
             async with session.ws_connect(service_url, headers=custom_headers) as websocket:
@@ -237,13 +239,25 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                     if isinstance(result_data, list):
                                         for res_item in result_data:
                                             if isinstance(res_item, dict):
-                                                final_text_parts.append(res_item.get("text", ""))
-                                            elif isinstance(res_item, str):
-                                                final_text_parts.append(res_item)
+                                                text = res_item.get("text", "").strip()
+                                                if text and text not in final_text_set:
+                                                    final_text_set.add(text)
+                                                    result_segments[current_segment_index] = text
+                                                    current_segment_index += 1
+                                            elif isinstance(res_item, str) and res_item.strip() and res_item.strip() not in final_text_set:
+                                                final_text_set.add(res_item.strip())
+                                                result_segments[current_segment_index] = res_item.strip()
+                                                current_segment_index += 1
                                     elif isinstance(result_data, dict):
-                                        final_text_parts.append(result_data.get("text", ""))
-                                    elif isinstance(result_data, str):
-                                        final_text_parts.append(result_data)
+                                        text = result_data.get("text", "").strip()
+                                        if text and text not in final_text_set:
+                                            final_text_set.add(text)
+                                            result_segments[current_segment_index] = text
+                                            current_segment_index += 1
+                                    elif isinstance(result_data, str) and result_data.strip() and result_data.strip() not in final_text_set:
+                                        final_text_set.add(result_data.strip())
+                                        result_segments[current_segment_index] = result_data.strip()
+                                        current_segment_index += 1
                                     
                                     if msg_type == "final":
                                         server_marked_final = True
@@ -324,18 +338,30 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                     if isinstance(result_data, list):
                                         for res_item in result_data:
                                             if isinstance(res_item, dict):
-                                                final_text_parts.append(res_item.get("text", ""))
-                                            elif isinstance(res_item, str):
-                                                final_text_parts.append(res_item)
+                                                text = res_item.get("text", "").strip()
+                                                if text and text not in final_text_set:
+                                                    final_text_set.add(text)
+                                                    result_segments[current_segment_index] = text
+                                                    current_segment_index += 1
+                                            elif isinstance(res_item, str) and res_item.strip() and res_item.strip() not in final_text_set:
+                                                final_text_set.add(res_item.strip())
+                                                result_segments[current_segment_index] = res_item.strip()
+                                                current_segment_index += 1
                                     elif isinstance(result_data, dict):
-                                        final_text_parts.append(result_data.get("text", ""))
-                                    elif isinstance(result_data, str):
-                                        final_text_parts.append(result_data)
+                                        text = result_data.get("text", "").strip()
+                                        if text and text not in final_text_set:
+                                            final_text_set.add(text)
+                                            result_segments[current_segment_index] = text
+                                            current_segment_index += 1
+                                    elif isinstance(result_data, str) and result_data.strip() and result_data.strip() not in final_text_set:
+                                        final_text_set.add(result_data.strip())
+                                        result_segments[current_segment_index] = result_data.strip()
+                                        current_segment_index += 1
 
                                     if msg_type == "final":
                                         server_marked_final = True
                                         # If it's final and we got text, it's a success regardless of earlier minor issues
-                                        if "".join(filter(None, final_text_parts)):
+                                        if "".join(filter(None, result_segments.values())):
                                             error_occurred = False # Override minor errors if final text is present
                                         break # Got the definitive final message
 
@@ -367,18 +393,32 @@ class VolcengineASRProvider(SpeechToTextEntity):
                         _LOGGER.error(f"ASR: Unexpected error processing final response: {e}", exc_info=True)
                         error_occurred = True; break
                 
-                final_text = " ".join(filter(None, final_text_parts)).strip()
-                _LOGGER.info(f"Final recognized text: 	{final_text}	")
+                # 按索引顺序构建最终文本，保持识别片段的原始顺序
+                final_text = ""
+                if result_segments:
+                    try:
+                        final_text_ordered = " ".join([result_segments[i] for i in sorted(result_segments.keys())])
+                        final_text = final_text_ordered.strip()
+                    except Exception as e:
+                        _LOGGER.error(f"Error constructing final text: {e}", exc_info=True)
+                        # 回退方案：直接使用集合内容（可能顺序不正确，但总比没有结果好）
+                        final_text = " ".join(final_text_set).strip()
+                
+                _LOGGER.info(f"Final recognized text: \"{final_text}\"")
 
-                if final_text: # If we have any text, it's a success
+                if final_text: # 如果我们有任何文本，则为成功
                     _LOGGER.info(f"ASR process finished with text. Error state: {error_occurred}, Server final: {server_marked_final}")
                     return SpeechResult(final_text, SpeechResultState.SUCCESS)
-                elif error_occurred: # No text, and an error occurred
+                elif server_marked_final and not error_occurred:
+                    # 服务器标记了最终状态，但没有文本（可能是静音识别）
+                    _LOGGER.info("ASR process ended: Server marked final with no text. Likely silence. Returning SUCCESS with no text.")
+                    return SpeechResult("", SpeechResultState.SUCCESS)
+                elif error_occurred: # 没有文本，发生了错误
                     _LOGGER.error(f"ASR process ended with an error and no recognized text. Details: {error_payload_for_logging}")
                     return SpeechResult(None, SpeechResultState.ERROR)
-                else: # No text, no explicit error (e.g., silence, or server closed without final message)
-                    _LOGGER.info("ASR process ended with no recognized text and no explicit error. Returning SUCCESS with no text.")
-                    return SpeechResult(None, SpeechResultState.SUCCESS)
+                else: # 没有文本，没有明确的错误（例如静音，或服务器在没有最终消息的情况下关闭）
+                    _LOGGER.warning("ASR process ended with no recognized text and no explicit error. Returning ERROR state.")
+                    return SpeechResult(None, SpeechResultState.ERROR)
 
         except aiohttp.ClientError as e:
             _LOGGER.error(f"aiohttp client connection error: {e}", exc_info=True)
