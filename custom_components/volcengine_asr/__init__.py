@@ -23,6 +23,7 @@ CONF_ENABLE_ITN = "enable_itn"
 CONF_ENABLE_PUNC = "enable_punc"
 CONF_RESULT_TYPE = "result_type"
 CONF_SHOW_UTTERANCES = "show_utterances"
+CONF_PERFORMANCE_MODE = "performance_mode"
 
 DEFAULT_SERVICE_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
 DEFAULT_LANGUAGE = "zh-CN"
@@ -34,6 +35,7 @@ DEFAULT_ENABLE_ITN = True
 DEFAULT_ENABLE_PUNC = True
 DEFAULT_RESULT_TYPE = "single"
 DEFAULT_SHOW_UTTERANCES = False
+DEFAULT_PERFORMANCE_MODE = True
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -52,6 +54,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_ENABLE_PUNC, default=DEFAULT_ENABLE_PUNC): cv.boolean,
                 vol.Optional(CONF_RESULT_TYPE, default=DEFAULT_RESULT_TYPE): cv.string,
                 vol.Optional(CONF_SHOW_UTTERANCES, default=DEFAULT_SHOW_UTTERANCES): cv.boolean,
+                vol.Optional(CONF_PERFORMANCE_MODE, default=DEFAULT_PERFORMANCE_MODE): cv.boolean,
             }
         )
     },

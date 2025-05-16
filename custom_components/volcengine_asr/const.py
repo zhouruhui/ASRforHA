@@ -16,6 +16,7 @@ CONF_ENABLE_ITN = "enable_itn"
 CONF_ENABLE_PUNC = "enable_punc"
 CONF_RESULT_TYPE = "result_type"
 CONF_SHOW_UTTERANCES = "show_utterances"
+CONF_PERFORMANCE_MODE = "performance_mode"
 
 # Default values
 DEFAULT_SERVICE_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
@@ -28,4 +29,10 @@ DEFAULT_ENABLE_ITN = True
 DEFAULT_ENABLE_PUNC = True
 DEFAULT_RESULT_TYPE = "full"
 DEFAULT_SHOW_UTTERANCES = False
+DEFAULT_PERFORMANCE_MODE = True
+
+# Performance optimization values
+PERF_AUDIO_BATCH_SIZE = 5  # 一次发送的音频块数量
+PERF_RESPONSE_TIMEOUT_SEND = 0.1  # 发送过程中等待响应的超时时间（秒）
+PERF_RESPONSE_TIMEOUT_FINAL = 3.0  # 等待最终响应的超时时间（秒）
 

@@ -39,6 +39,7 @@ from .const import (
     CONF_ENABLE_PUNC,
     CONF_RESULT_TYPE,
     CONF_SHOW_UTTERANCES,
+    CONF_PERFORMANCE_MODE,
     DEFAULT_SERVICE_URL,
     DEFAULT_LANGUAGE,
     DEFAULT_AUDIO_FORMAT,
@@ -49,6 +50,10 @@ from .const import (
     DEFAULT_ENABLE_PUNC,
     DEFAULT_RESULT_TYPE,
     DEFAULT_SHOW_UTTERANCES,
+    DEFAULT_PERFORMANCE_MODE,
+    PERF_AUDIO_BATCH_SIZE,
+    PERF_RESPONSE_TIMEOUT_SEND,
+    PERF_RESPONSE_TIMEOUT_FINAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,106 +203,33 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 _LOGGER.debug(f"Sent Full Client Request: {full_client_request_payload}")
 
                 # Loop to send audio and receive intermediate results
+                audio_chunks_batch = []
+                performance_mode = self._config.get(CONF_PERFORMANCE_MODE, DEFAULT_PERFORMANCE_MODE)
+                batch_size = PERF_AUDIO_BATCH_SIZE if performance_mode else 1
+                timeout_send = PERF_RESPONSE_TIMEOUT_SEND if performance_mode else 0.5
+                timeout_final = PERF_RESPONSE_TIMEOUT_FINAL if performance_mode else 10.0
+                
                 async for audio_chunk in stream:
                     if not audio_chunk or error_occurred:
                         continue
-                    flags = 0b0000 # Not final chunk
-                    msg_type_flags = (0b0010 << 4) | flags # Audio Frame
-                    audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
-                    audio_payload_size = struct.pack(">I", len(audio_chunk))
-                    await websocket.send_bytes(audio_header + audio_payload_size + audio_chunk)
-                    _LOGGER.debug(f"Sent audio chunk, size: {len(audio_chunk)}")
-
-                    try:
-                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=0.5) # Adjusted timeout
-                        if ws_msg.type == aiohttp.WSMsgType.BINARY:
-                            response_data = ws_msg.data
-                            if not response_data or len(response_data) < 8:
-                                _LOGGER.debug("ASR: Empty/incomplete binary msg (during send), skipping.")
-                                continue
-                            
-                            resp_header_data = response_data[:4]
-                            raw_payload_data = response_data[8:] # Assuming 4-byte size header after 4-byte msg header
-                            processed_payload_data = self._preprocess_payload(raw_payload_data)
-                            resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
-
-                            if resp_msg_type == 0b1001:  # Server ASR Result
-                                if not processed_payload_data:
-                                    _LOGGER.debug("ASR: Empty payload after preprocess (during send), skipping.")
-                                    continue
-                                try:
-                                    decoded_payload = processed_payload_data.decode("utf-8")
-                                    resp_json = json.loads(decoded_payload)
-                                    _LOGGER.debug(f"ASR Response (during send): {resp_json}")
-
-                                    msg_type = resp_json.get("type")
-                                    msg_status = resp_json.get("header", {}).get("status", 0)
-
-                                    if msg_type == "error" or (msg_status != 20000000 and msg_status != 0 and msg_type == "final"):
-                                        _LOGGER.error(f"Volcengine ASR Error in payload (during send): {resp_json}")
-                                        error_payload_for_logging = resp_json
-                                        error_occurred = True; break
-
-                                    # 提取识别结果文本
-                                    result_data = resp_json.get("result")
-                                    extracted_texts = []
-                                    
-                                    if isinstance(result_data, list):
-                                        for res_item in result_data:
-                                            if isinstance(res_item, dict):
-                                                text = res_item.get("text", "")
-                                                if text and text.strip():
-                                                    extracted_texts.append(text.strip())
-                                            elif isinstance(res_item, str) and res_item.strip():
-                                                extracted_texts.append(res_item.strip())
-                                    elif isinstance(result_data, dict):
-                                        text = result_data.get("text", "")
-                                        if text and text.strip():
-                                            extracted_texts.append(text.strip())
-                                    elif isinstance(result_data, str) and result_data.strip():
-                                        extracted_texts.append(result_data.strip())
-                                    
-                                    # 处理提取的文本
-                                    for text in extracted_texts:
-                                        # 对于中间结果，只添加新的不重复文本
-                                        if text not in processed_text_set:
-                                            processed_text_set.add(text)
-                                            all_text_segments.append({"text": text, "is_final": False})
-                                    
-                                    # 如果是最终结果，特殊标记
-                                    if msg_type == "final":
-                                        for text in extracted_texts:
-                                            if text:  # 确保有内容
-                                                final_results.append(text)
-                                        server_marked_final = True
-                                        # 不立即跳出，继续发送最终空音频块
-
-                                except UnicodeDecodeError as ude_err:
-                                    _LOGGER.warning(f"ASR: UnicodeDecodeError (during send): {ude_err}. Payload (hex): {processed_payload_data.hex()}")
-                                except json.JSONDecodeError as json_err:
-                                    _LOGGER.warning(f"ASR: JSONDecodeError (during send): {json_err}. Original (hex): {raw_payload_data.hex()}, Processed: {processed_payload_data.decode('utf-8', errors='ignore')}")
-                                except AttributeError as attr_err:
-                                    _LOGGER.error(f"ASR: AttributeError processing result (during send): {attr_err}. Response JSON: {resp_json}", exc_info=True)
-                                    error_payload_for_logging = resp_json
-                                    error_occurred = True; break
-                            
-                            elif resp_msg_type == 0b1111:  # Server Error Message
-                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message (during send): {processed_payload_data.decode('utf-8', errors='ignore')}")
-                                error_payload_for_logging = processed_payload_data.decode('utf-8', errors='ignore')
-                                error_occurred = True; break
-
-                        elif ws_msg.type == aiohttp.WSMsgType.ERROR:
-                            _LOGGER.error(f"aiohttp WS Error (during send): {websocket.exception()}")
-                            error_occurred = True; break
-                        elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
-                            _LOGGER.info("aiohttp WS Closed by server (during send).")
-                            error_occurred = True; break # Treat as error if closed during active send
-
-                    except asyncio.TimeoutError:
-                        _LOGGER.debug("ASR: No immediate response while sending audio, continuing.")
-                    except Exception as e:
-                        _LOGGER.error(f"ASR: Unexpected error processing response (during send): {e}", exc_info=True)
-                        error_occurred = True; break
+                    
+                    # 添加到批次
+                    audio_chunks_batch.append(audio_chunk)
+                    
+                    # 如果达到最大批次大小，则发送
+                    if len(audio_chunks_batch) >= batch_size:
+                        await self._send_audio_chunks(websocket, audio_chunks_batch, False)
+                        audio_chunks_batch = []
+                        
+                        # 尝试接收响应，但不等待太久
+                        await self._try_receive_responses(websocket, processed_text_set, all_text_segments, 
+                                                        final_results, error_occurred, server_marked_final, 
+                                                        error_payload_for_logging, timeout_send)
+                    
+                # 发送剩余的音频块
+                if audio_chunks_batch and not error_occurred:
+                    await self._send_audio_chunks(websocket, audio_chunks_batch, False)
+                    audio_chunks_batch = []
                 
                 # Send final empty audio chunk if no error occurred during streaming
                 if not error_occurred:
@@ -312,101 +244,9 @@ class VolcengineASRProvider(SpeechToTextEntity):
                     _LOGGER.warning(f"Skipping final empty chunk due to earlier error. Error details: {error_payload_for_logging}")
 
                 # Wait for final ASR responses
-                while not server_marked_final and not error_occurred:
-                    try:
-                        ws_msg = await asyncio.wait_for(websocket.receive(), timeout=10.0) 
-                        if ws_msg.type == aiohttp.WSMsgType.BINARY:
-                            response_data = ws_msg.data
-                            if not response_data or len(response_data) < 8:
-                                _LOGGER.debug("ASR: Empty/incomplete binary msg (final wait), skipping.")
-                                continue
-
-                            resp_header_data = response_data[:4]
-                            raw_payload_data = response_data[8:]
-                            processed_payload_data = self._preprocess_payload(raw_payload_data)
-                            resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
-
-                            if resp_msg_type == 0b1001:  # Server ASR Result
-                                if not processed_payload_data:
-                                    _LOGGER.debug("ASR: Empty payload after preprocess (final wait), skipping.")
-                                    continue
-                                try:
-                                    decoded_payload = processed_payload_data.decode("utf-8")
-                                    resp_json = json.loads(decoded_payload)
-                                    _LOGGER.debug(f"ASR Response (final wait): {resp_json}")
-
-                                    msg_type = resp_json.get("type")
-                                    msg_status = resp_json.get("header", {}).get("status", 0)
-
-                                    if msg_type == "error" or (msg_type == "final" and msg_status != 20000000 and msg_status != 0):
-                                        _LOGGER.error(f"Volcengine ASR Error in payload (final wait): {resp_json}")
-                                        error_payload_for_logging = resp_json
-                                        error_occurred = True; break 
-                                    
-                                    # 提取识别结果文本
-                                    result_data = resp_json.get("result")
-                                    extracted_texts = []
-                                    
-                                    if isinstance(result_data, list):
-                                        for res_item in result_data:
-                                            if isinstance(res_item, dict):
-                                                text = res_item.get("text", "")
-                                                if text and text.strip():
-                                                    extracted_texts.append(text.strip())
-                                            elif isinstance(res_item, str) and res_item.strip():
-                                                extracted_texts.append(res_item.strip())
-                                    elif isinstance(result_data, dict):
-                                        text = result_data.get("text", "")
-                                        if text and text.strip():
-                                            extracted_texts.append(text.strip())
-                                    elif isinstance(result_data, str) and result_data.strip():
-                                        extracted_texts.append(result_data.strip())
-                                    
-                                    # 处理提取的文本
-                                    for text in extracted_texts:
-                                        # 对于中间结果，只添加新的不重复文本
-                                        if text not in processed_text_set:
-                                            processed_text_set.add(text)
-                                            all_text_segments.append({"text": text, "is_final": msg_type == "final"})
-                                    
-                                    # 对于最终结果，添加到final_results
-                                    if msg_type == "final":
-                                        for text in extracted_texts:
-                                            if text:  # 确保有内容
-                                                final_results.append(text)
-                                        server_marked_final = True
-                                        # 如果收到最终结果，即使有轻微错误也视为成功
-                                        if extracted_texts:
-                                            error_occurred = False
-                                        break  # 收到最终消息后退出
-
-                                except UnicodeDecodeError as ude_err:
-                                    _LOGGER.warning(f"ASR: UnicodeDecodeError (final wait): {ude_err}. Payload (hex): {processed_payload_data.hex()}")
-                                except json.JSONDecodeError as json_err:
-                                    _LOGGER.warning(f"ASR: JSONDecodeError (final wait): {json_err}. Original (hex): {raw_payload_data.hex()}, Processed: {processed_payload_data.decode('utf-8', errors='ignore')}")
-                                except AttributeError as attr_err:
-                                    _LOGGER.error(f"ASR: AttributeError processing result (final wait): {attr_err}. Response JSON: {resp_json}", exc_info=True)
-                                    error_payload_for_logging = resp_json
-                                    error_occurred = True; break
-                            
-                            elif resp_msg_type == 0b1111:  # Server Error Message
-                                _LOGGER.error(f"Volcengine ASR WebSocket Error Message (final wait): {processed_payload_data.decode('utf-8', errors='ignore')}")
-                                error_payload_for_logging = processed_payload_data.decode('utf-8', errors='ignore')
-                                error_occurred = True; break
-
-                        elif ws_msg.type == aiohttp.WSMsgType.ERROR:
-                            _LOGGER.error(f"aiohttp WS Error (final wait): {websocket.exception()}")
-                            error_occurred = True; break
-                        elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
-                            _LOGGER.info("aiohttp WS Closed by server (final wait).")
-                            break # Connection closed, proceed with what we have
-
-                    except asyncio.TimeoutError:
-                        _LOGGER.warning("ASR: Timeout waiting for final response from server.")
-                        break # Assume no more messages are coming
-                    except Exception as e:
-                        _LOGGER.error(f"ASR: Unexpected error processing final response: {e}", exc_info=True)
-                        error_occurred = True; break
+                await self._try_receive_responses(websocket, processed_text_set, all_text_segments, 
+                                               final_results, error_occurred, server_marked_final, 
+                                               error_payload_for_logging, timeout_final)
                 
                 # 构建最终结果
                 final_text = ""
@@ -418,24 +258,9 @@ class VolcengineASRProvider(SpeechToTextEntity):
                     _LOGGER.info(f"Using final result from server: \"{final_text}\"")
                 # 如果没有final结果，但有其他文本片段
                 elif all_text_segments:
-                    # 1. 尝试找到最长的片段
-                    longest_segment = max(all_text_segments, key=lambda x: len(x["text"]))
-                    
-                    # 2. 对于长度相近的片段，优先选择后面的（更完整的）
-                    candidates = []
-                    longest_len = len(longest_segment["text"])
-                    for segment in all_text_segments:
-                        # 如果长度达到最长段的80%以上，认为是候选
-                        if len(segment["text"]) >= longest_len * 0.8:
-                            candidates.append(segment)
-                    
-                    if candidates:
-                        # 优先使用最后一个候选（通常是最完整的）
-                        final_text = candidates[-1]["text"]
-                        _LOGGER.info(f"Selected longest candidate segment: \"{final_text}\"")
-                    else:
-                        final_text = longest_segment["text"]
-                        _LOGGER.info(f"Using longest segment: \"{final_text}\"")
+                    # 简化决策逻辑：直接使用最后一个文本片段（通常是最完整的）
+                    final_text = all_text_segments[-1]["text"]
+                    _LOGGER.info(f"Using latest text segment: \"{final_text}\"")
                 
                 _LOGGER.info(f"Final recognized text: \"{final_text}\"")
 
@@ -459,4 +284,126 @@ class VolcengineASRProvider(SpeechToTextEntity):
         except Exception as e:
             _LOGGER.error(f"An unexpected error occurred in Volcengine ASR processing: {e}", exc_info=True)
             return SpeechResult(None, SpeechResultState.ERROR)
+
+    async def _send_audio_chunks(self, websocket, chunks, is_final=False):
+        """发送一批音频块"""
+        for i, audio_chunk in enumerate(chunks):
+            # 只有最后一个块在需要时标记为final
+            is_last_and_final = is_final and i == len(chunks) - 1
+            flags = 0b0010 if is_last_and_final else 0b0000
+            msg_type_flags = (0b0010 << 4) | flags
+            audio_header = struct.pack(">BBBB", 0x11, msg_type_flags, 0x00, 0x00)
+            audio_payload_size = struct.pack(">I", len(audio_chunk))
+            await websocket.send_bytes(audio_header + audio_payload_size + audio_chunk)
+            _LOGGER.debug(f"Sent audio chunk, size: {len(audio_chunk)}, is_final: {is_last_and_final}")
+    
+    async def _try_receive_responses(self, websocket, processed_text_set, all_text_segments, 
+                                   final_results, error_occurred, server_marked_final, 
+                                   error_payload_for_logging, timeout=0.1):
+        """尝试接收并处理响应，但有超时限制"""
+        start_time = asyncio.get_event_loop().time()
+        end_time = start_time + timeout
+        
+        while asyncio.get_event_loop().time() < end_time and not server_marked_final and not error_occurred:
+            try:
+                remaining_time = end_time - asyncio.get_event_loop().time()
+                if remaining_time <= 0:
+                    break
+                    
+                ws_msg = await asyncio.wait_for(websocket.receive(), timeout=remaining_time)
+                if ws_msg.type == aiohttp.WSMsgType.BINARY:
+                    response_data = ws_msg.data
+                    if not response_data or len(response_data) < 8:
+                        _LOGGER.debug("ASR: Empty/incomplete binary msg, skipping.")
+                        continue
+                    
+                    resp_header_data = response_data[:4]
+                    raw_payload_data = response_data[8:]
+                    processed_payload_data = self._preprocess_payload(raw_payload_data)
+                    resp_msg_type = (resp_header_data[1] >> 4) & 0x0F
+                    
+                    if resp_msg_type == 0b1001:  # Server ASR Result
+                        if not processed_payload_data:
+                            _LOGGER.debug("ASR: Empty payload after preprocess, skipping.")
+                            continue
+                        try:
+                            decoded_payload = processed_payload_data.decode("utf-8")
+                            resp_json = json.loads(decoded_payload)
+                            _LOGGER.debug(f"ASR Response: {resp_json}")
+                            
+                            msg_type = resp_json.get("type")
+                            msg_status = resp_json.get("header", {}).get("status", 0)
+                            
+                            if msg_type == "error" or (msg_status != 20000000 and msg_status != 0 and msg_type == "final"):
+                                _LOGGER.error(f"Volcengine ASR Error in payload: {resp_json}")
+                                error_payload_for_logging = resp_json
+                                error_occurred = True
+                                break
+                            
+                            # 提取识别结果文本
+                            result_data = resp_json.get("result")
+                            extracted_texts = []
+                            
+                            if isinstance(result_data, list):
+                                for res_item in result_data:
+                                    if isinstance(res_item, dict):
+                                        text = res_item.get("text", "")
+                                        if text and text.strip():
+                                            extracted_texts.append(text.strip())
+                                    elif isinstance(res_item, str) and res_item.strip():
+                                        extracted_texts.append(res_item.strip())
+                            elif isinstance(result_data, dict):
+                                text = result_data.get("text", "")
+                                if text and text.strip():
+                                    extracted_texts.append(text.strip())
+                            elif isinstance(result_data, str) and result_data.strip():
+                                extracted_texts.append(result_data.strip())
+                            
+                            # 处理提取的文本
+                            for text in extracted_texts:
+                                if text not in processed_text_set:
+                                    processed_text_set.add(text)
+                                    all_text_segments.append({"text": text, "is_final": msg_type == "final"})
+                            
+                            # 如果是最终结果，特殊标记
+                            if msg_type == "final":
+                                for text in extracted_texts:
+                                    if text:  # 确保有内容
+                                        final_results.append(text)
+                                server_marked_final = True
+                                return True  # 收到最终结果后立即返回
+                                
+                        except UnicodeDecodeError as ude_err:
+                            _LOGGER.warning(f"ASR: UnicodeDecodeError: {ude_err}. Payload (hex): {processed_payload_data.hex()}")
+                        except json.JSONDecodeError as json_err:
+                            _LOGGER.warning(f"ASR: JSONDecodeError: {json_err}. Original (hex): {raw_payload_data.hex()}, Processed: {processed_payload_data.decode('utf-8', errors='ignore')}")
+                        except AttributeError as attr_err:
+                            _LOGGER.error(f"ASR: AttributeError processing result: {attr_err}. Response JSON: {resp_json}", exc_info=True)
+                            error_payload_for_logging = resp_json
+                            error_occurred = True
+                            break
+                    
+                    elif resp_msg_type == 0b1111:  # Server Error Message
+                        _LOGGER.error(f"Volcengine ASR WebSocket Error Message: {processed_payload_data.decode('utf-8', errors='ignore')}")
+                        error_payload_for_logging = processed_payload_data.decode('utf-8', errors='ignore')
+                        error_occurred = True
+                        break
+                        
+                elif ws_msg.type == aiohttp.WSMsgType.ERROR:
+                    _LOGGER.error(f"aiohttp WS Error: {websocket.exception()}")
+                    error_occurred = True
+                    break
+                elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
+                    _LOGGER.info("aiohttp WS Closed by server.")
+                    break
+                    
+            except asyncio.TimeoutError:
+                # 超时是正常的，继续检查时间
+                pass
+            except Exception as e:
+                _LOGGER.error(f"ASR: Unexpected error processing response: {e}", exc_info=True)
+                error_occurred = True
+                break
+                
+        return server_marked_final
 
