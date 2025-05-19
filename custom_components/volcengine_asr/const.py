@@ -25,6 +25,9 @@ CONF_TIMEOUT_FINAL = "timeout_final"
 CONF_END_WINDOW_SIZE = "end_window_size"
 CONF_FORCE_TO_SPEECH_TIME = "force_to_speech_time"
 CONF_LOG_TEXT_CHANGE_ONLY = "log_text_change_only"
+# 调试日志配置
+CONF_ENABLE_PERF_LOG = "enable_perf_log"
+CONF_LOG_LEVEL = "log_level"
 
 # Default values
 DEFAULT_SERVICE_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
@@ -45,10 +48,20 @@ DEFAULT_TIMEOUT_FINAL = 3.0
 # VAD默认值
 DEFAULT_END_WINDOW_SIZE = 800       # 检测非语音部分的窗口大小(毫秒)
 DEFAULT_FORCE_TO_SPEECH_TIME = 0    # 强制识别时间(毫秒)，0表示不强制
-DEFAULT_LOG_TEXT_CHANGE_ONLY = True # 只在文本变化时记录
+DEFAULT_LOG_TEXT_CHANGE_ONLY = True # 只在文本变化时记录日志
+# 调试日志默认值
+DEFAULT_ENABLE_PERF_LOG = False     # 是否启用性能日志
+DEFAULT_LOG_LEVEL = "info"          # 日志级别 (debug, info, warning, error)
 
 # Performance optimization values
 PERF_AUDIO_BATCH_SIZE = 5  # 一次发送的音频块数量
 PERF_RESPONSE_TIMEOUT_SEND = 0.1  # 发送过程中等待响应的超时时间（秒）
 PERF_RESPONSE_TIMEOUT_FINAL = 3.0  # 等待最终响应的超时时间（秒）
+
+# 日志标签
+LOG_TAG_AUDIO_SEND = "AUDIO_SEND"           # 音频发送
+LOG_TAG_RESPONSE_RECEIVE = "RESP_RECEIVE"   # 响应接收
+LOG_TAG_TEXT_EXTRACT = "TEXT_EXTRACT"       # 文本提取
+LOG_TAG_WEBSOCKET = "WEBSOCKET"             # WebSocket连接
+LOG_TAG_VAD = "VAD"                         # VAD处理
 

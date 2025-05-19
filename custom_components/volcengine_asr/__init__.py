@@ -26,6 +26,8 @@ from .const import (
     CONF_END_WINDOW_SIZE,
     CONF_FORCE_TO_SPEECH_TIME,
     CONF_LOG_TEXT_CHANGE_ONLY,
+    CONF_ENABLE_PERF_LOG,
+    CONF_LOG_LEVEL,
     DEFAULT_SERVICE_URL,
     DEFAULT_LANGUAGE,
     DEFAULT_AUDIO_FORMAT,
@@ -40,6 +42,8 @@ from .const import (
     DEFAULT_END_WINDOW_SIZE,
     DEFAULT_FORCE_TO_SPEECH_TIME,
     DEFAULT_LOG_TEXT_CHANGE_ONLY,
+    DEFAULT_ENABLE_PERF_LOG,
+    DEFAULT_LOG_LEVEL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,6 +70,9 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_END_WINDOW_SIZE, default=DEFAULT_END_WINDOW_SIZE): cv.positive_int,
                 vol.Optional(CONF_FORCE_TO_SPEECH_TIME, default=DEFAULT_FORCE_TO_SPEECH_TIME): cv.positive_int,
                 vol.Optional(CONF_LOG_TEXT_CHANGE_ONLY, default=DEFAULT_LOG_TEXT_CHANGE_ONLY): cv.boolean,
+                # 调试日志配置
+                vol.Optional(CONF_ENABLE_PERF_LOG, default=DEFAULT_ENABLE_PERF_LOG): cv.boolean,
+                vol.Optional(CONF_LOG_LEVEL, default=DEFAULT_LOG_LEVEL): vol.In(["debug", "info", "warning", "error"]),
             }
         )
     },
