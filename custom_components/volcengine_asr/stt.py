@@ -40,6 +40,9 @@ from .const import (
     CONF_RESULT_TYPE,
     CONF_SHOW_UTTERANCES,
     CONF_PERFORMANCE_MODE,
+    CONF_END_WINDOW_SIZE,
+    CONF_FORCE_TO_SPEECH_TIME,
+    CONF_LOG_TEXT_CHANGE_ONLY,
     DEFAULT_SERVICE_URL,
     DEFAULT_LANGUAGE,
     DEFAULT_AUDIO_FORMAT,
@@ -51,6 +54,9 @@ from .const import (
     DEFAULT_RESULT_TYPE,
     DEFAULT_SHOW_UTTERANCES,
     DEFAULT_PERFORMANCE_MODE,
+    DEFAULT_END_WINDOW_SIZE,
+    DEFAULT_FORCE_TO_SPEECH_TIME,
+    DEFAULT_LOG_TEXT_CHANGE_ONLY,
     PERF_AUDIO_BATCH_SIZE,
     PERF_RESPONSE_TIMEOUT_SEND,
     PERF_RESPONSE_TIMEOUT_FINAL,
@@ -168,6 +174,21 @@ class VolcengineASRProvider(SpeechToTextEntity):
             "channel": self._config.get(CONF_AUDIO_CHANNEL, DEFAULT_AUDIO_CHANNEL),
             "codec": "raw",
         }
+        
+        # 获取VAD配置
+        end_window_size = self._config.get(CONF_END_WINDOW_SIZE, DEFAULT_END_WINDOW_SIZE)
+        force_to_speech_time = self._config.get(CONF_FORCE_TO_SPEECH_TIME, DEFAULT_FORCE_TO_SPEECH_TIME)
+        
+        # 创建VAD配置
+        vad_config = {
+            "vad_enable": True,
+            "end_window_size": end_window_size,  # 检测非语音部分的窗口大小(毫秒)
+        }
+        
+        # 如果设置了强制识别时间，添加到VAD配置
+        if force_to_speech_time > 0:
+            vad_config["force_to_speech_time"] = force_to_speech_time
+        
         request_params = {
             "model_name": "bigmodel",
             "language": self._config.get(CONF_LANGUAGE, DEFAULT_LANGUAGE),
@@ -175,6 +196,7 @@ class VolcengineASRProvider(SpeechToTextEntity):
             "enable_punc": self._config.get(CONF_ENABLE_PUNC, DEFAULT_ENABLE_PUNC),
             "result_type": self._config.get(CONF_RESULT_TYPE, DEFAULT_RESULT_TYPE),
             "show_utterances": self._config.get(CONF_SHOW_UTTERANCES, DEFAULT_SHOW_UTTERANCES),
+            "vad": vad_config,  # 添加VAD配置到请求参数中
         }
         full_client_request_payload = {
             "user": {"uid": "homeassistant_user"},
@@ -192,6 +214,10 @@ class VolcengineASRProvider(SpeechToTextEntity):
         server_marked_final = False
         error_occurred = False
         error_payload_for_logging = None
+        # 获取是否只在文本变化时记录日志
+        log_text_change_only = self._config.get(CONF_LOG_TEXT_CHANGE_ONLY, DEFAULT_LOG_TEXT_CHANGE_ONLY)
+        # 跟踪上一个识别文本，用于比较变化
+        last_recognized_text = ""
         
         try:
             async with session.ws_connect(service_url, headers=custom_headers) as websocket:
@@ -224,8 +250,13 @@ class VolcengineASRProvider(SpeechToTextEntity):
                         # 尝试接收响应，但不等待太久
                         await self._try_receive_responses(websocket, processed_text_set, all_text_segments, 
                                                         final_results, error_occurred, server_marked_final, 
-                                                        error_payload_for_logging, timeout_send)
-                    
+                                                        error_payload_for_logging, last_recognized_text, 
+                                                        log_text_change_only, timeout_send)
+                        
+                        # 更新上一次识别文本
+                        if all_text_segments and all_text_segments[-1]["text"]:
+                            last_recognized_text = all_text_segments[-1]["text"]
+                
                 # 发送剩余的音频块
                 if audio_chunks_batch and not error_occurred:
                     await self._send_audio_chunks(websocket, audio_chunks_batch, False)
@@ -246,7 +277,8 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 # Wait for final ASR responses
                 await self._try_receive_responses(websocket, processed_text_set, all_text_segments, 
                                                final_results, error_occurred, server_marked_final, 
-                                               error_payload_for_logging, timeout_final)
+                                               error_payload_for_logging, last_recognized_text,
+                                               log_text_change_only, timeout_final)
                 
                 # 构建最终结果
                 final_text = ""
@@ -299,7 +331,8 @@ class VolcengineASRProvider(SpeechToTextEntity):
     
     async def _try_receive_responses(self, websocket, processed_text_set, all_text_segments, 
                                    final_results, error_occurred, server_marked_final, 
-                                   error_payload_for_logging, timeout=0.1):
+                                   error_payload_for_logging, last_recognized_text,
+                                   log_text_change_only, timeout=0.1):
         """尝试接收并处理响应，但有超时限制"""
         start_time = asyncio.get_event_loop().time()
         end_time = start_time + timeout
@@ -329,7 +362,9 @@ class VolcengineASRProvider(SpeechToTextEntity):
                         try:
                             decoded_payload = processed_payload_data.decode("utf-8")
                             resp_json = json.loads(decoded_payload)
-                            _LOGGER.debug(f"ASR Response: {resp_json}")
+                            
+                            # 只在文本变化时记录日志或不启用此功能时始终记录
+                            has_text_changed = False
                             
                             msg_type = resp_json.get("type")
                             msg_status = resp_json.get("header", {}).get("status", 0)
@@ -364,6 +399,14 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                 if text not in processed_text_set:
                                     processed_text_set.add(text)
                                     all_text_segments.append({"text": text, "is_final": msg_type == "final"})
+                                    
+                                    # 检查文本是否变化
+                                    if text != last_recognized_text:
+                                        has_text_changed = True
+                            
+                            # 根据文本变化情况决定是否记录日志
+                            if not log_text_change_only or has_text_changed or msg_type == "final":
+                                _LOGGER.debug(f"ASR Response: {resp_json}")
                             
                             # 如果是最终结果，特殊标记
                             if msg_type == "final":

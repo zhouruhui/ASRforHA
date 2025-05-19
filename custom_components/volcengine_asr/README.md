@@ -8,6 +8,8 @@
 *   支持在 Home Assistant 的 `configuration.yaml` 文件中配置认证信息及相关参数。
 *   集成到 Home Assistant 的语音助手，作为可选的语音转文本引擎。
 *   支持自定义服务地址、语言、音频参数等。
+*   支持VAD (Voice Activity Detection) 语音活动检测，自动检测语音结束并停止识别过程。
+*   支持仅在文本变化时记录日志，减少不必要的日志输出。
 
 ## 先决条件
 
@@ -24,14 +26,14 @@
 
 1.  **添加自定义存储库**：
     *   打开 Home Assistant 中的 HACS 面板。
-    *   进入 “集成” (Integrations) 部分。
-    *   点击右上角的三个点菜单，选择 “自定义存储库” (Custom repositories)。
-    *   在 “存储库” (Repository) 输入框中填入本集成的 GitHub 仓库地址 (例如: `https://github.com/manus-team/ha-volcengine-asr` - 请替换为实际的仓库地址)。
-    *   在 “类别” (Category) 下拉菜单中选择 “集成” (Integration)。
-    *   点击 “添加” (ADD)。
+    *   进入 "集成" (Integrations) 部分。
+    *   点击右上角的三个点菜单，选择 "自定义存储库" (Custom repositories)。
+    *   在 "存储库" (Repository) 输入框中填入本集成的 GitHub 仓库地址 (例如: `https://github.com/manus-team/ha-volcengine-asr` - 请替换为实际的仓库地址)。
+    *   在 "类别" (Category) 下拉菜单中选择 "集成" (Integration)。
+    *   点击 "添加" (ADD)。
 2.  **安装集成**：
-    *   关闭自定义存储库对话框后，在 HACS 的集成列表中搜索 “Volcengine ASR Integration” (或您在 `manifest.json` 中定义的名称)。
-    *   找到该集成后，点击 “安装” (INSTALL)。
+    *   关闭自定义存储库对话框后，在 HACS 的集成列表中搜索 "Volcengine ASR Integration" (或您在 `manifest.json` 中定义的名称)。
+    *   找到该集成后，点击 "安装" (INSTALL)。
     *   按照 HACS 的提示完成安装。
 3.  **重启 Home Assistant**：安装完成后，根据提示重启 Home Assistant 以加载新的集成。
 
@@ -69,6 +71,12 @@ volcengine_asr:
   # enable_punc: true                                 # 是否启用标点符号
   # result_type: "single"                             # 结果返回方式 ('full' 或 'single')
   # show_utterances: false                            # 是否输出语音停顿、分句、分词信息
+  # performance_mode: true                            # 是否启用性能优化模式
+  
+  # --- VAD 相关配置 ---
+  # end_window_size: 800                              # VAD 检测非语音部分的窗口大小(毫秒)
+  # force_to_speech_time: 0                           # 强制识别时间(毫秒)，0表示不强制
+  # log_text_change_only: true                        # 是否只在文本变化时记录日志
 ```
 
 **配置项说明**：
@@ -79,10 +87,16 @@ volcengine_asr:
 *   `service_url` (可选): 火山引擎 ASR 服务的 WebSocket 接口地址。默认为双向流式接口 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel`。如果您需要使用其他接口（如流式输入模式），可以在此修改。
 *   `language` (可选): 语音识别的目标语言。默认为 `zh-CN` (简体中文)。请确保火山引擎支持您选择的语言。
 *   `audio_format`, `audio_rate`, `audio_bits`, `audio_channel` (可选): 这些参数定义了期望的音频流格式。默认值 (`pcm`, `16000`, `16`, `1`) 通常与 Home Assistant 语音助手生成的音频流格式一致。一般情况下无需修改，除非您明确知道火山引擎 API 对此有特殊要求或 Home Assistant 的音频输出格式不同。
-*   `enable_itn` (可选): 是否启用文本逆规范化 (例如，将“一百二十三”转换为“123”)。默认为 `true`。
+*   `enable_itn` (可选): 是否启用文本逆规范化 (例如，将"一百二十三"转换为"123")。默认为 `true`。
 *   `enable_punc` (可选): 是否在识别结果中自动添加标点符号。默认为 `true`。
 *   `result_type` (可选): 结果返回方式。`single` 表示增量返回结果（推荐用于实时语音助手），`full` 表示全量返回。默认为 `single`。
 *   `show_utterances` (可选): 是否在结果中包含语音的停顿、分句、分词等详细信息。默认为 `false`。
+*   `performance_mode` (可选): 是否启用性能优化模式。启用后会采用批量发送音频和更短的响应超时设置，提高识别效率。默认为 `true`。
+
+**VAD相关配置**：
+*   `end_window_size` (可选): VAD 检测非语音部分的窗口大小，单位为毫秒。当检测到指定时长的无声音频时，会自动结束识别过程。默认为 `800` (0.8秒)。
+*   `force_to_speech_time` (可选): 强制开始识别的时间，单位为毫秒。设置为 `0` 表示不强制。该参数可以用来控制VAD的灵敏度，较小的值会使系统更快开始识别。默认为 `0`。
+*   `log_text_change_only` (可选): 是否只在文本内容变化时记录日志。启用后可大幅减少重复日志，便于调试。默认为 `true`。
 
 配置完成后，请再次重启 Home Assistant 以使配置生效。
 
@@ -91,8 +105,8 @@ volcengine_asr:
 配置并重启 Home Assistant 后，火山引擎 ASR 集成应该可以作为语音转文本 (STT) 引擎使用了。
 
 1.  **选择 STT 引擎**：
-    *   在 Home Assistant 的配置中，找到语音助手或 STT 相关的设置部分 (具体位置可能因 Home Assistant 版本而异，通常在 “配置” -> “语音助手” 或 “Assist” 相关设置中)。
-    *   在 “首选语音转文本引擎” (Preferred Speech-to-Text engine) 或类似选项中，您应该能看到 “Volcengine ASR Integration” (或您在 `manifest.json` 中定义的名称) 作为可选引擎。
+    *   在 Home Assistant 的配置中，找到语音助手或 STT 相关的设置部分 (具体位置可能因 Home Assistant 版本而异，通常在 "配置" -> "语音助手" 或 "Assist" 相关设置中)。
+    *   在 "首选语音转文本引擎" (Preferred Speech-to-Text engine) 或类似选项中，您应该能看到 "Volcengine ASR Integration" (或您在 `manifest.json` 中定义的名称) 作为可选引擎。
     *   选择它作为您的 STT 引擎。
 2.  **测试语音识别**：
     *   使用 Home Assistant 的语音助手功能（例如，通过移动应用、网页界面的麦克风按钮，或连接的智能音箱）进行语音输入。

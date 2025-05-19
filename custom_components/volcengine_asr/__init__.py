@@ -7,35 +7,42 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import discovery # Added import
 
-DOMAIN = "volcengine_asr"
+from .const import (
+    DOMAIN,
+    CONF_APP_ID,
+    CONF_ACCESS_TOKEN,
+    CONF_RESOURCE_ID,
+    CONF_SERVICE_URL,
+    CONF_LANGUAGE,
+    CONF_AUDIO_FORMAT,
+    CONF_AUDIO_RATE,
+    CONF_AUDIO_BITS,
+    CONF_AUDIO_CHANNEL,
+    CONF_ENABLE_ITN,
+    CONF_ENABLE_PUNC,
+    CONF_RESULT_TYPE,
+    CONF_SHOW_UTTERANCES,
+    CONF_PERFORMANCE_MODE,
+    CONF_END_WINDOW_SIZE,
+    CONF_FORCE_TO_SPEECH_TIME,
+    CONF_LOG_TEXT_CHANGE_ONLY,
+    DEFAULT_SERVICE_URL,
+    DEFAULT_LANGUAGE,
+    DEFAULT_AUDIO_FORMAT,
+    DEFAULT_AUDIO_RATE,
+    DEFAULT_AUDIO_BITS,
+    DEFAULT_AUDIO_CHANNEL,
+    DEFAULT_ENABLE_ITN,
+    DEFAULT_ENABLE_PUNC,
+    DEFAULT_RESULT_TYPE,
+    DEFAULT_SHOW_UTTERANCES,
+    DEFAULT_PERFORMANCE_MODE,
+    DEFAULT_END_WINDOW_SIZE,
+    DEFAULT_FORCE_TO_SPEECH_TIME,
+    DEFAULT_LOG_TEXT_CHANGE_ONLY,
+)
+
 _LOGGER = logging.getLogger(__name__)
-
-CONF_APP_ID = "app_id"
-CONF_ACCESS_TOKEN = "access_token"
-CONF_RESOURCE_ID = "resource_id"
-CONF_SERVICE_URL = "service_url"
-CONF_LANGUAGE = "language"
-CONF_AUDIO_FORMAT = "audio_format"
-CONF_AUDIO_RATE = "audio_rate"
-CONF_AUDIO_BITS = "audio_bits"
-CONF_AUDIO_CHANNEL = "audio_channel"
-CONF_ENABLE_ITN = "enable_itn"
-CONF_ENABLE_PUNC = "enable_punc"
-CONF_RESULT_TYPE = "result_type"
-CONF_SHOW_UTTERANCES = "show_utterances"
-CONF_PERFORMANCE_MODE = "performance_mode"
-
-DEFAULT_SERVICE_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
-DEFAULT_LANGUAGE = "zh-CN"
-DEFAULT_AUDIO_FORMAT = "pcm"
-DEFAULT_AUDIO_RATE = 16000
-DEFAULT_AUDIO_BITS = 16
-DEFAULT_AUDIO_CHANNEL = 1
-DEFAULT_ENABLE_ITN = True
-DEFAULT_ENABLE_PUNC = True
-DEFAULT_RESULT_TYPE = "single"
-DEFAULT_SHOW_UTTERANCES = False
-DEFAULT_PERFORMANCE_MODE = True
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -55,6 +62,10 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_RESULT_TYPE, default=DEFAULT_RESULT_TYPE): cv.string,
                 vol.Optional(CONF_SHOW_UTTERANCES, default=DEFAULT_SHOW_UTTERANCES): cv.boolean,
                 vol.Optional(CONF_PERFORMANCE_MODE, default=DEFAULT_PERFORMANCE_MODE): cv.boolean,
+                # VAD相关配置
+                vol.Optional(CONF_END_WINDOW_SIZE, default=DEFAULT_END_WINDOW_SIZE): cv.positive_int,
+                vol.Optional(CONF_FORCE_TO_SPEECH_TIME, default=DEFAULT_FORCE_TO_SPEECH_TIME): cv.positive_int,
+                vol.Optional(CONF_LOG_TEXT_CHANGE_ONLY, default=DEFAULT_LOG_TEXT_CHANGE_ONLY): cv.boolean,
             }
         )
     },

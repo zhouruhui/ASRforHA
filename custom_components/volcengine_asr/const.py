@@ -17,6 +17,14 @@ CONF_ENABLE_PUNC = "enable_punc"
 CONF_RESULT_TYPE = "result_type"
 CONF_SHOW_UTTERANCES = "show_utterances"
 CONF_PERFORMANCE_MODE = "performance_mode"
+CONF_DEBUG_MODE = "debug_mode"
+CONF_BATCH_SIZE = "batch_size"
+CONF_TIMEOUT_SEND = "timeout_send"
+CONF_TIMEOUT_FINAL = "timeout_final"
+# VAD配置项
+CONF_END_WINDOW_SIZE = "end_window_size"
+CONF_FORCE_TO_SPEECH_TIME = "force_to_speech_time"
+CONF_LOG_TEXT_CHANGE_ONLY = "log_text_change_only"
 
 # Default values
 DEFAULT_SERVICE_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
@@ -30,6 +38,14 @@ DEFAULT_ENABLE_PUNC = True
 DEFAULT_RESULT_TYPE = "full"
 DEFAULT_SHOW_UTTERANCES = False
 DEFAULT_PERFORMANCE_MODE = True
+DEFAULT_DEBUG_MODE = False
+DEFAULT_BATCH_SIZE = 5
+DEFAULT_TIMEOUT_SEND = 0.1
+DEFAULT_TIMEOUT_FINAL = 3.0
+# VAD默认值
+DEFAULT_END_WINDOW_SIZE = 800       # 检测非语音部分的窗口大小(毫秒)
+DEFAULT_FORCE_TO_SPEECH_TIME = 0    # 强制识别时间(毫秒)，0表示不强制
+DEFAULT_LOG_TEXT_CHANGE_ONLY = True # 只在文本变化时记录
 
 # Performance optimization values
 PERF_AUDIO_BATCH_SIZE = 5  # 一次发送的音频块数量
