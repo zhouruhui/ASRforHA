@@ -54,9 +54,9 @@ DEFAULT_ENABLE_PERF_LOG = False     # 是否启用性能日志
 DEFAULT_LOG_LEVEL = "info"          # 日志级别 (debug, info, warning, error)
 
 # Performance optimization values
-PERF_AUDIO_BATCH_SIZE = 5  # 一次发送的音频块数量
-PERF_RESPONSE_TIMEOUT_SEND = 0.1  # 发送过程中等待响应的超时时间（秒）
-PERF_RESPONSE_TIMEOUT_FINAL = 3.0  # 等待最终响应的超时时间（秒）
+PERF_AUDIO_BATCH_SIZE = 10  # 从5增加到10，减少发送次数
+PERF_RESPONSE_TIMEOUT_SEND = 0.05  # 从0.1减少到0.05，减少等待时间
+PERF_RESPONSE_TIMEOUT_FINAL = 1.0  # 从3.0减少到1.0，减少最终等待时间
 
 # 日志标签
 LOG_TAG_AUDIO_SEND = "AUDIO_SEND"           # 音频发送

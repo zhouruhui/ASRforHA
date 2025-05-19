@@ -387,6 +387,17 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 final_recv_start = time.time()
                 self._perf_log(LOG_TAG_RESPONSE_RECEIVE, f"等待最终响应，超时: {timeout_final}秒")
                 
+                # 添加文本提取时间检查
+                if self._first_text_time > 0 and not server_marked_final:
+                    text_extraction_time = time.time() - self._first_text_time
+                    # 如果从第一次提取文本已经过去了1秒以上，并且有至少一个文本段，可以考虑提前结束
+                    if text_extraction_time > 1.0 and all_text_segments and len(all_text_segments) > 0:
+                        self._perf_log(LOG_TAG_RESPONSE_RECEIVE, f"从首次提取文本已经过去 {text_extraction_time:.3f} 秒，可能可以提前结束")
+                        # 如果最后一次文本提取已经超过0.5秒没有变化，就提前结束
+                        if time.time() - self._last_resp_time > 0.5:
+                            self._perf_log(LOG_TAG_RESPONSE_RECEIVE, "文本已稳定，提前结束等待")
+                            server_marked_final = True
+                
                 await self._try_receive_responses(websocket, processed_text_set, all_text_segments, 
                                                final_results, error_occurred, server_marked_final, 
                                                error_payload_for_logging, last_recognized_text,
@@ -588,6 +599,8 @@ class VolcengineASRProvider(SpeechToTextEntity):
                                         has_text_changed = True
                                         self._perf_log(LOG_TAG_TEXT_EXTRACT, 
                                             f"文本已更改: \"{text}\"")
+                                        # 文本有变化时更新最后响应时间
+                                        self._last_resp_time = time.time()
                             
                             # 根据文本变化情况决定是否记录日志
                             if not log_text_change_only or has_text_changed or msg_type == "final":
@@ -627,6 +640,9 @@ class VolcengineASRProvider(SpeechToTextEntity):
                     break
                 elif ws_msg.type == aiohttp.WSMsgType.CLOSED:
                     _LOGGER.info("aiohttp WS Closed by server.")
+                    # 服务器关闭连接可能意味着识别结束，直接标记为final
+                    self._perf_log(LOG_TAG_WEBSOCKET, "服务器关闭WebSocket连接，标记为结束")
+                    server_marked_final = True
                     break
                     
             except asyncio.TimeoutError:
