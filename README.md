@@ -8,6 +8,8 @@
 *   支持在 Home Assistant 的 `configuration.yaml` 文件中配置认证信息及相关参数。
 *   集成到 Home Assistant 的语音助手，作为可选的语音转文本引擎。
 *   支持自定义服务地址、语言、音频参数等。
+*   支持VAD (Voice Activity Detection) 语音活动检测，自动检测语音结束并停止识别过程。
+*   支持仅在文本变化时记录日志，减少不必要的日志输出。
 
 ## 先决条件
 
@@ -69,7 +71,12 @@ volcengine_asr:
   # enable_punc: true                                 # 是否启用标点符号
   # result_type: "single"                             # 结果返回方式 ('full' 或 'single')
   # show_utterances: false                            # 是否输出语音停顿、分句、分词信息
-  # performance_mode: true                            # 是否启用性能优化模式，减少语音识别延迟
+  # performance_mode: true                            # 是否启用性能优化模式
+  
+  # --- VAD 相关配置 ---
+  # end_window_size: 800                              # VAD 检测非语音部分的窗口大小(毫秒)
+  # force_to_speech_time: 0                           # 强制识别时间(毫秒)，0表示不强制
+  # log_text_change_only: true                        # 是否只在文本变化时记录日志
 ```
 
 **配置项说明**：
@@ -84,7 +91,12 @@ volcengine_asr:
 *   `enable_punc` (可选): 是否在识别结果中自动添加标点符号。默认为 `true`。
 *   `result_type` (可选): 结果返回方式。`single` 表示增量返回结果（推荐用于实时语音助手），`full` 表示全量返回。默认为 `single`。
 *   `show_utterances` (可选): 是否在结果中包含语音的停顿、分句、分词等详细信息。默认为 `false`。
-*   `performance_mode` (可选): 是否启用性能优化模式。默认为 `true`。启用时会优化音频处理和网络通信策略，显著减少从说话到文字输出的延迟，提升实时交互体验。如果您遇到识别不稳定的情况，可以尝试设置为 `false`。
+*   `performance_mode` (可选): 是否启用性能优化模式。启用后会采用批量发送音频和更短的响应超时设置，提高识别效率。默认为 `true`。
+
+**VAD相关配置**：
+*   `end_window_size` (可选): VAD 检测非语音部分的窗口大小，单位为毫秒。当检测到指定时长的无声音频时，会自动结束识别过程。默认为 `800` (0.8秒)。
+*   `force_to_speech_time` (可选): 强制开始识别的时间，单位为毫秒。设置为 `0` 表示不强制。该参数可以用来控制VAD的灵敏度，较小的值会使系统更快开始识别。默认为 `0`。
+*   `log_text_change_only` (可选): 是否只在文本内容变化时记录日志。启用后可大幅减少重复日志，便于调试。默认为 `true`。
 
 配置完成后，请再次重启 Home Assistant 以使配置生效。
 
@@ -115,10 +127,6 @@ volcengine_asr:
     *   尝试调整麦克风的输入音量和环境噪音。
     *   如果火山引擎 API 支持，可以尝试在 `configuration.yaml` 中配置热词等高级参数以优化特定场景的识别率 (本集成目前未直接暴露所有高级参数，但可根据火山引擎文档扩展)。
     *   确认 `language` 配置与您实际使用的语言一致。
-*   **识别延迟过高**：
-    *   确认 `performance_mode` 设置为 `true`（默认）。
-    *   检查您的网络环境到火山引擎服务器的延迟，可以使用 ping 等工具测试。
-    *   如果仍然延迟明显，可以尝试通过日志分析具体瓶颈，并提交问题反馈。
 
 ## 贡献
 
