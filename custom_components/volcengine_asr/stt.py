@@ -390,11 +390,11 @@ class VolcengineASRProvider(SpeechToTextEntity):
                 # 添加文本提取时间检查
                 if self._first_text_time > 0 and not server_marked_final:
                     text_extraction_time = time.time() - self._first_text_time
-                    # 如果从第一次提取文本已经过去了1秒以上，并且有至少一个文本段，可以考虑提前结束
-                    if text_extraction_time > 1.0 and all_text_segments and len(all_text_segments) > 0:
+                    # 如果从第一次提取文本已经过去了2秒以上，并且有至少一个文本段，可以考虑提前结束
+                    if text_extraction_time > 2.0 and all_text_segments and len(all_text_segments) > 2:
                         self._perf_log(LOG_TAG_RESPONSE_RECEIVE, f"从首次提取文本已经过去 {text_extraction_time:.3f} 秒，可能可以提前结束")
-                        # 如果最后一次文本提取已经超过0.5秒没有变化，就提前结束
-                        if time.time() - self._last_resp_time > 0.5:
+                        # 如果最后一次文本提取已经超过1.5秒没有变化，就提前结束
+                        if time.time() - self._last_resp_time > 1.5:
                             self._perf_log(LOG_TAG_RESPONSE_RECEIVE, "文本已稳定，提前结束等待")
                             server_marked_final = True
                 

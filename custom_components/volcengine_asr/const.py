@@ -56,7 +56,7 @@ DEFAULT_LOG_LEVEL = "info"          # 日志级别 (debug, info, warning, error)
 # Performance optimization values
 PERF_AUDIO_BATCH_SIZE = 10  # 从5增加到10，减少发送次数
 PERF_RESPONSE_TIMEOUT_SEND = 0.05  # 从0.1减少到0.05，减少等待时间
-PERF_RESPONSE_TIMEOUT_FINAL = 1.0  # 从3.0减少到1.0，减少最终等待时间
+PERF_RESPONSE_TIMEOUT_FINAL = 2.0  # 从1.0增加到2.0，增加最终等待时间，确保完整识别
 
 # 日志标签
 LOG_TAG_AUDIO_SEND = "AUDIO_SEND"           # 音频发送
