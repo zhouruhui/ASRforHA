@@ -9,6 +9,7 @@
   "loggers": ["custom_components.volcengine_asr"],
   "dependencies": [],
   "after_dependencies": ["http"],
-  "config_flow": false
+  "config_flow": false,
+  "icon": "mdi:waveform"
 }
 
